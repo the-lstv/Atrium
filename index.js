@@ -81,9 +81,7 @@ const Match = {
     },
 
     // From: 64
-    initiator: "@",
-
-    singleton: ["area", "base", "br", "col", "command", "embed", "hr", "img", "input", "keygen", "link", "meta", "param", "source", "track", "wbr"],
+    initiator: "@"
 }
 
 
@@ -168,6 +166,15 @@ function parse(options){
     parseAt(options, blockPosition)
     return result;
 }
+
+// TODO
+// class ParserState {
+//     constructor(options){
+//         this.options = options
+
+
+//     }
+// }
 
 
 function parseAt(options, initialBlockStart){
@@ -660,6 +667,21 @@ function configTools(parsed){
     return tools
 }
 
-let _exports = { Match, parser_regex: Match, parse, parseAt, stringify, merge, configTools };
+let _exports = { parse, parseAt, Match, stringify, merge, configTools };
 
 if(!globalThis.window) module.exports = _exports; else window.AtriumParser = _exports;
+
+
+/*
+
+Possible streaming syntax:
+
+const stream = AtriumParser.createStream(options)
+
+stream.write("blo")
+stream.write("ck {")
+stream.write("} ") // At this point, onBlock would be called
+
+stream.end()
+
+*/

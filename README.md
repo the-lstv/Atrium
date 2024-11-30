@@ -27,6 +27,10 @@ Options include:
 - `asArray`: if the parse function should return an array of blocks
 - `asLookupTable`: if the parse function should a lookup map for efficient data access
 
+### Syntax
+![Syntax](https://cdn.extragon.cloud/file/ef25afa3bf73cc5aa2f3f4ca2327ba15.png)
+
+
 ### Streaming
 Streaming content is possible:
 ```js

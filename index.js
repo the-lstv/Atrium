@@ -490,11 +490,7 @@ function parse(data, options = {}){
         A really fast parser for embedding dynamic behavior, config files, or any other use of the Atrium syntax.
 
     */
-
-    if(typeof data === "object"){
-        options = data
-        data = data.content
-    }
+    
 
     // TODO: This should be moved to the parser itself!
     let offset = -1;

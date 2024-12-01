@@ -101,9 +101,8 @@ const Chars = {
 class ParserState {
     constructor(options, state = {}){
         this.options = options
-        this.index = 0
-        this.offset = state.offset || -1
-        // this.offset = 0
+        this.offset = typeof state.offset === "number"? state.offset: -1
+        this.index = this.offset
 
         this.blockState = {}
         this.clearBlockState()
@@ -118,7 +117,7 @@ class ParserState {
         this.blockState.stringChar = null;
         this.blockState.current_value_isString = null;
         this.blockState.parsingValueStart = this.index;
-        this.blockState.parsingValueLength = 1;
+        this.blockState.parsingValueLength = 0;
         this.blockState.parsingValueSequenceBroken = false;
         this.blockState.last_key = null;
 
@@ -185,8 +184,8 @@ class ParserState {
             const block = this.clearBlockState(!cancel)
 
             // No error, send block for processing
-            if(this.options._onBlock) this.options._onBlock(block)
-            if(this.options.onBlock) this.options.onBlock(block)
+            if(this.options._onBlock) this.options._onBlock(block);
+            if(this.options.onBlock) this.options.onBlock(block);
 
         } else {
 
@@ -199,26 +198,30 @@ class ParserState {
 
         }
 
+        this.index++;
 
         if(this.options.embedded) {
 
-            const start = this.index +1;
+            const start = this.index;
             const found = this.fastForwardTo(Match.initiator)
 
             if(found){
                 this.index++;
-                this.blockState.parsingValueStart = this.index
+                this.blockState.parsingValueStart = this.index +1
             }
 
             if(this.options.onText) this.options.onText(this.buffer.slice(start, this.index));
 
-        } else { this.index ++ }
+        }
 
     }
 
     write(chunk){
+        if(this.buffer) throw ".write called more than once: Sorry, streaming is currently not supported. Please check for latest updates.";
         this.buffer = chunk
         this.index = this.offset
+        this.blockState.parsingValueStart = this.index +1;
+        this.blockState.parsingValueLength = 0;
         this.offset = -1
         parseAt(this)
         return this
@@ -286,9 +289,9 @@ function parseAt(state){
                 state.blockState.parsing_state = States.blockName;
                 state.blockState.type = Types.keyword;
                 state.blockState.parsingValueStart = state.index
-                state.index --
-                state.blockState.parsingValueLength = 0
+                state.blockState.parsingValueLength = 1
                 break
+
 
             // Beginning of a block name
             case States.blockName:
@@ -387,7 +390,7 @@ function parseAt(state){
                         break
                     }
 
-                    const key = state.get_value().trim()
+                    const key = state.get_value()
 
                     state.blockState.type = Types.default
 

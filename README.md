@@ -10,8 +10,7 @@ This is the most basic way to use the parser:
 ```js
 const { parse } = require("./atrium")
 
-parse({
-  content: "hello { world }",
+parse("hello { world }", {
   onBlock(block) {
     console.log(block) // { name: "hello", attributes: [], properties: { world: [ true ] } }
   }
@@ -33,10 +32,12 @@ Options include:
 
 ### Streaming
 Streaming content is possible:
+Streaming allows for some extra performance and chunked parsing, for when you receive content in chunks, to avoid having to concat all chunks and parse them at once.
 ```js
-const { parseStream } = require("./atrium")
+const { parserStream } = require("./atrium")
 
-const stream = parseStream({
+// NOTE: parserStream currently doesnt work with options like "asArray".
+const stream = new parserStream({
   onBlock(block) {
     console.log(block)
   }
@@ -54,8 +55,7 @@ Embedded mode requires all blocks to begin with "@".
 ```js
 const { parse } = require("./atrium")
 
-parse({
-  content: "<div> @hello { world } </div>",
+parse("<div> @hello { world } </div>", {
   embedded: true,
   onBlock(block) {
     console.log(block)

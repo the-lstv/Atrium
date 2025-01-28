@@ -6,7 +6,7 @@ const States = {
     beforeProperties: 3,
     keywordSearch: 4,
     keyword: 5,
-    valueStart: 6,
+    arbitraryValue: 6,
 }
 
 
@@ -325,32 +325,6 @@ function parseAt(state){
                 break;
 
 
-            // Attribute
-            case States.attribute:
-                if(charCode === Chars[")"] || charCode === Chars[","]){
-                    state.blockState.type = Types.default
-                    if(state.blockState.parsedString !== null) state.blockState.block.attributes.push(state.blockState.parsedString.trim())
-                    if(charCode === Chars[")"]) state.blockState.parsing_state = States.beforeProperties;
-                    break;
-                }
-
-                if(Match.stringChar(charCode)){
-                    state.blockState.stringChar = charCode
-
-                    state.blockState.next_parsing_state = States.attribute
-
-                    state.value_start(0, 1, Types.string)
-                } else if (Match.plain_value(charCode)){
-                    state.blockState.type = Types.plain
-
-                    state.blockState.next_parsing_state = States.attribute
-
-                    state.value_start(1)
-                } else state.exit(true)
-
-                break
-
-
             // Before a block
             case States.beforeProperties:
                 if(charCode === Chars[";"]){
@@ -408,7 +382,7 @@ function parseAt(state){
 
                         state.blockState.last_key = key
                         state.blockState.parsedString = null
-                        state.blockState.parsing_state = States.valueStart
+                        state.blockState.parsing_state = States.arbitraryValue
 
                     } else { state.exit(true); continue };
                 } else {
@@ -423,8 +397,34 @@ function parseAt(state){
                 break;
 
 
-            // Start of a value
-            case States.valueStart:
+            // Beginning of a value
+            case States.arbitraryValue: case States.attribute:
+                // TODO: Both attributes and values should be handled by the same state (all values)
+
+                if(state.blockState.parsing_state === States.attribute){
+                    if(charCode === Chars[")"] || charCode === Chars[","]){
+                        state.blockState.type = Types.default
+                        if(state.blockState.parsedString !== null) state.blockState.block.attributes.push(state.blockState.parsedString.trim())
+                        if(charCode === Chars[")"]) state.blockState.parsing_state = States.beforeProperties;
+                        break;
+                    }
+    
+                    if(Match.stringChar(charCode)){
+                        state.blockState.stringChar = charCode
+    
+                        state.blockState.next_parsing_state = States.attribute
+    
+                        state.value_start(0, 1, Types.string)
+                    } else if (Match.plain_value(charCode)){
+                        state.blockState.type = Types.plain
+    
+                        state.blockState.next_parsing_state = States.attribute
+    
+                        state.value_start(1)
+                    } else state.exit(true)
+
+                    return
+                }
 
                 // Push values
                 if(state.blockState.parsedString !== null){
@@ -449,7 +449,7 @@ function parseAt(state){
                 if(charCode === Chars[","]){
 
                     state.blockState.type = Types.default
-                    state.blockState.parsing_state = States.valueStart;
+                    state.blockState.parsing_state = States.arbitraryValue;
                     
                 } else if(charCode === Chars[";"]){
 
@@ -463,16 +463,24 @@ function parseAt(state){
 
                 } else {
                     if(Match.stringChar(charCode)){
-                        state.blockState.current_value_isString = true;
-                        state.blockState.stringChar = charCode
 
-                        state.blockState.next_parsing_state = States.valueStart
+                        // state.blockState.current_value_isString = true;
+                        // state.blockState.stringChar = charCode
 
-                        state.value_start(0, 1, Types.string)
+                        // state.blockState.next_parsing_state = States.arbitraryValue
+
+                        state.value_start(0, 1)
+
+                        state.fastForwardTo(String.fromCharCode(charCode))
+
+                        this.blockState.parsingValueLength = state.index - this.blockState.parsingValueStart;
+
+                        state.blockState.parsedString = state.get_value()
+
                     } else if (Match.plain_value(charCode)){
                         state.blockState.current_value_isString = false;
 
-                        state.blockState.next_parsing_state = States.valueStart
+                        state.blockState.next_parsing_state = States.arbitraryValue
 
                         state.value_start(1, 0, Types.plain)
                     } else state.exit(true)

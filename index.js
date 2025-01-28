@@ -1,4 +1,4 @@
-const version = "1.1.0";
+const version = "1.2.0";
 
 const States = {
     blockSearch: -1,
@@ -201,6 +201,8 @@ class BlockState {
 
             const block = this.clear(true)
 
+            if(!block.name) delete block.name;
+
             // No error, send block for processing
             if(!recursive) {
                 if(this.parent.options._onBlock) this.parent.options._onBlock(block);
@@ -342,7 +344,7 @@ function parseAt(state, blockState){
             case States.blockNameEnd:
                 const name = blockState.get_value();
 
-                if(name) blockState.block.name = name; else delete blockState.block.name;
+                blockState.block.name = name;
 
                 if(charCode === Chars["("]){
                     const nextChar = state.buffer.charCodeAt(state.index +1);
@@ -363,6 +365,7 @@ function parseAt(state, blockState){
             // Before a block
             case States.beforeProperties:
                 if(charCode === Chars[";"]){
+                    blockState.block.isCall = true;
                     blockState.close()
                     continue
                 }
@@ -428,7 +431,9 @@ function parseAt(state, blockState){
                             state.recursionLevels.set(state.recursed, level)
                         }
 
-                        level.parsing_state = charCode === Chars["{"]? States.keywordSearch: States.attribute;
+                        level.parsing_state = charCode === Chars["{"]? States.keywordSearch: States.blockNameEnd;
+
+                        if(charCode === Chars["("]) state.index --;
 
                         parseAt(state, level);
 

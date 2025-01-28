@@ -1,3 +1,5 @@
+const version = "1.2.1";
+
 const States = {
     blockSearch: -1,
     blockName: 0,
@@ -6,7 +8,8 @@ const States = {
     beforeProperties: 3,
     keywordSearch: 4,
     keyword: 5,
-    valueStart: 6,
+    arbitraryValue: 6,
+    writeKeywordValue: 7
 }
 
 
@@ -21,7 +24,6 @@ const Types = {
 
 
 const Match = {
-    // From: /[\w-.]/
     keyword(code) {
         return(
             (code >= 48 && code <= 57) || // 0-9
@@ -33,7 +35,6 @@ const Match = {
         )
     },
 
-    // From: /[\w-</>.*:]/
     plain_value(code) {
         return (
             (code >= 48 && code <= 57) || // 0-9
@@ -50,17 +51,14 @@ const Match = {
         )
     },
 
-    // From: /["'`]/
     stringChar(code) {
         return code === 34 || code === 39 || code === 96;
     },
 
-    // From: /[\s\n\r\t]/
     whitespace(code) {
         return code === 32 || code === 9 || code === 10 || code === 13;
     },
 
-    // From: /^\d+(\.\d+)?$/
     digit(str) {
         let dotSeen = false;
         for (let i = 0; i < str.length; i++) {
@@ -75,7 +73,6 @@ const Match = {
         return true;
     },
 
-    // From: /\d/
     number(code) {
         return code >= 48 && code <= 57;
     },
@@ -95,69 +92,22 @@ const Chars = {
     ":": 58,
     ";": 59,
     "#": 35,
+    "\\": 92
 }
 
 
 class ParserState {
     constructor(options, state = {}){
         this.options = options
-        this.offset = typeof state.offset === "number"? state.offset: -1
+        this.offset = typeof state.offset === "number"? state.offset: -1;
+        this.collector = state.collector || null;
         this.index = this.offset
+        this.recursed = 0
+        this.closedAtLevel = -1
 
-        this.blockState = {}
-        this.clearBlockState()
-    }
+        this.recursionLevels = null;
 
-    clearBlockState(returnBlock){
-        this.blockState.parsing_state = this.options.embedded? States.blockName: States.blockSearch;
-        this.blockState.next_parsing_state = 0;
-        this.blockState.parsedString = null;
-        this.blockState.type = this.options.embedded? 1: 0;
-        this.blockState.revert_type = null;
-        this.blockState.stringChar = null;
-        this.blockState.current_value_isString = null;
-        this.blockState.parsingValueStart = this.index;
-        this.blockState.parsingValueLength = 0;
-        this.blockState.parsingValueSequenceBroken = false;
-        this.blockState.last_key = null;
-
-        if(returnBlock){
-
-            const block = this.blockState.block
-
-            this.blockState.block = {
-                name: null,
-                attributes: [],
-                properties: {}
-            }
-
-            return block;
-
-        } else if(this.blockState.block) {
-
-            this.blockState.block.name = null
-            this.blockState.block.attributes.length = 0
-            this.blockState.block.properties = {}
-
-        } else {
-            this.blockState.block = {
-                name: null,
-                attributes: [],
-                properties: {}
-            }
-        }
-    }
-
-    value_start(length = 0, positionOffset = 0, _type = null){
-        if(_type !== null) this.blockState.type = _type;
-        this.blockState.parsingValueStart = this.index + positionOffset;
-        this.blockState.parsingValueLength = length;
-        this.blockState.parsingValueSequenceBroken = false;
-        this.blockState.parsedString = null;
-    }
-
-    get_value(){
-        return this.buffer.slice(this.blockState.parsingValueStart, this.blockState.parsingValueStart + this.blockState.parsingValueLength)
+        this.blockState = new BlockState(this)
     }
 
     fastForwardTo(char){
@@ -172,92 +122,181 @@ class ParserState {
         return true
     }
 
-    exit(cancel, message = null){
-        /*
-            Note that calling exit does not actually mean stopping parsing.
-            The name may be a bit confusing, but it just means that a block has stopped parsing, either due to an error or that it has simply finished parsing.
-        */
-
-
-        if(!cancel) {
-
-            const block = this.clearBlockState(!cancel)
-
-            // No error, send block for processing
-            if(this.options._onBlock) this.options._onBlock(block);
-            if(this.options.onBlock) this.options.onBlock(block);
-
-        } else {
-
-            this.clearBlockState()
-
-            const error = new Error("[Parser Syntax Error] " + (message || "") + "\n  (at character " + this.index + ")");
-
-            if(this.options.strict) this.index = this.buffer.length; // Skip to the end of the file
-            if(typeof this.options.onError === "function") this.options.onError(error);
-
-        }
-
-        this.index++;
-
-        if(this.options.embedded) {
-
-            const start = this.index;
-            const found = this.fastForwardTo(Match.initiator)
-
-            if(found){
-                this.index++;
-                this.blockState.parsingValueStart = this.index +1
-            }
-
-            if(this.options.onText) this.options.onText(this.buffer.slice(start, this.index));
-
-        }
-
-    }
-
     write(chunk){
         if(this.buffer) throw ".write called more than once: Sorry, streaming is currently not supported. Please check for latest updates.";
         this.buffer = chunk
         this.index = this.offset
-        this.blockState.parsingValueStart = this.index +1;
-        this.blockState.parsingValueLength = 0;
+        // this.blockState.parsingValueStart = this.index +1;
+        // this.blockState.parsingValueLength = 0;
         this.offset = -1
-        parseAt(this)
+        parseAt(this, this.blockState)
         return this
     }
 
     end(){
-        // TODO:
+        // if(this.buffer) {
+        //     this.buffer = null
+        // }
+
+        // this.recursionLevels = null
+        // this.recursed = 0
+        // this.blockState = null
+        return this
     }
 }
 
 
-function parseAt(state){
+class BlockState {
+    constructor(parent){
+        this.parent = parent
+        this.clear()
+    }
+
+    clear(returnBlock = false){
+        this.parsing_state = this.parent.options.embedded? States.blockName: States.blockSearch;
+        this.next_parsing_state = 0;
+        this.parsedValue = null;
+        this.type = this.parent.options.embedded? 1: 0;
+        this.parsingValueStart = this.parent.index;
+        this.parsingValueLength = 0;
+        this.parsingValueSequenceBroken = false;
+        this.last_key = null;
+
+        this.quit = false;
+
+        if(returnBlock){
+
+            const block = this.block
+
+            this.block = {
+                name: null,
+                attributes: [],
+                properties: {}
+            }
+
+            return block;
+
+        } else if(this.block) {
+
+            this.block.name = null
+            this.block.attributes.length = 0
+            this.block.properties = {}
+
+        } else {
+            this.block = {
+                name: null,
+                attributes: [],
+                properties: {}
+            }
+        }
+    }
+
+    close(cancel, message){
+        const recursive = this.parent.recursed !== 0;
+        if(recursive) {
+            this.parent.recursed --;
+        }
+
+        if(!cancel) {
+
+            const block = this.clear(true);
+
+            // No error, send block for processing
+            if(!recursive) {
+
+                if(this.parent.collector) {
+                    if(this.parent.options.asArray) {
+                        this.parent.collector.push(block)
+                    } else if(this.parent.options.asLookupTable) {
+                        if(!this.parent.collector.has(block.name)) {
+                            this.parent.collector.set(block.name, []);
+                        }
+
+                        this.parent.collector.get(block.name).push(block);
+                    }
+                }
+
+                if(this.parent.options.onBlock) this.parent.options.onBlock(block);
+
+            } else {
+                this._returnedBlock = block
+            }
+
+        } else {
+
+            this.clear()
+
+            const error = new Error("[Parser Syntax Error] " + (message || "") + "\n  (at character " + this.parent.index + ")");
+
+            if(this.parent.options.strict) this.parent.index = this.parent.buffer.length; // Skip to the end of the file
+            if(typeof this.parent.options.onError === "function") this.parent.options.onError(error);
+
+        }
+
+        if(recursive) {
+            this.quit = true
+        }
+
+        this.parent.index++;
+
+        if(this.parent.options.embedded) {
+
+            const start = this.parent.index;
+            const found = this.parent.fastForwardTo(Match.initiator)
+
+            if(found){
+                this.parent.index++;
+                this.parent.parsingValueStart = this.parent.index +1
+            }
+
+            if(this.parent.options.onText) this.parent.options.onText(this.parent.buffer.slice(start, this.parent.index));
+
+        }
+    }
+
+    value_start(length = 0, positionOffset = 0, _type = null){
+        if(_type !== null) this.type = _type;
+        this.parsingValueStart = this.parent.index + positionOffset;
+        this.parsingValueLength = length;
+        this.parsingValueSequenceBroken = false;
+        this.parsedValue = null;
+    }
+
+    get_value(){
+        return this.parent.buffer.slice(this.parsingValueStart, this.parsingValueStart + this.parsingValueLength)
+    }
+
+    begin_arbitrary_value(returnTo){
+        this.parsedValue = null
+        this.parsing_state = States.arbitraryValue
+        this.type = Types.default
+        this.next_parsing_state = returnTo
+    }
+}
+
+
+function parseAt(state, blockState){
     if(state.index >= state.buffer.length -1) return;
 
     while(++state.index < state.buffer.length){
 
-        if(state.blockState.type === Types.plain){
-            if (!Match.plain_value(state.buffer.charCodeAt(state.index))) {
-                state.blockState.parsedString = state.get_value()
-                state.blockState.type = Types.default
-                state.blockState.parsing_state = state.blockState.next_parsing_state
-            } else {
-                state.blockState.parsingValueLength++
-                continue
-            }
+        if(blockState.quit) {
+            blockState.quit = false
+            return
         }
 
+        if(blockState.type === Types.plain){
+            if (!Match.plain_value(state.buffer.charCodeAt(state.index))) {
+                blockState.parsedValue = blockState.get_value()
 
-        if(state.blockState.type === Types.string){
-            if (state.buffer.charCodeAt(state.index) === state.blockState.stringChar) {
-                state.index++
-                state.blockState.parsedString = state.get_value()
-                state.blockState.type = Types.default
-                state.blockState.parsing_state = state.blockState.next_parsing_state
+                if(blockState.parsedValue === "true") blockState.parsedValue = true;
+                else if(blockState.parsedValue === "false") blockState.parsedValue = false;
+                else if(Match.digit(blockState.parsedValue)) blockState.parsedValue = Number(blockState.parsedValue);
+
+                blockState.type = Types.default
+                blockState.parsing_state = blockState.next_parsing_state
             } else {
-                state.blockState.parsingValueLength++
+                blockState.parsingValueLength++
                 continue
             }
         }
@@ -267,7 +306,7 @@ function parseAt(state){
 
 
         // Skip whitespace if possible.
-        if(state.blockState.type === Types.default && Match.whitespace(charCode)){
+        if(blockState.type === Types.default && Match.whitespace(charCode)){
             continue
         }
 
@@ -277,19 +316,19 @@ function parseAt(state){
             continue
         }
 
-        switch(state.blockState.parsing_state){
+        switch(blockState.parsing_state){
 
             // Searching for the beginning of a block
             case States.blockSearch:
                 if(!Match.keyword(charCode)) {
-                    state.exit(true, "Unexpected character " + String.fromCharCode(charCode));
+                    blockState.close(true, "Unexpected character " + String.fromCharCode(charCode));
                     continue
                 }
 
-                state.blockState.parsing_state = States.blockName;
-                state.blockState.type = Types.keyword;
-                state.blockState.parsingValueStart = state.index
-                state.blockState.parsingValueLength = 1
+                blockState.parsing_state = States.blockName;
+                blockState.type = Types.keyword;
+                blockState.parsingValueStart = state.index
+                blockState.parsingValueLength = 1
                 break
 
 
@@ -298,87 +337,71 @@ function parseAt(state){
                 if(!Match.keyword(charCode)){
 
                     if(Match.whitespace(charCode)) {
-                        state.blockState.parsingValueSequenceBroken = true
+                        blockState.parsingValueSequenceBroken = true
                         break
                     }
 
-                    if(charCode !== Chars["("] && charCode !== Chars["{"]) { state.exit(true, "Unexpected character " + String.fromCharCode(charCode)); continue};
+                    if(charCode !== Chars["("] && charCode !== Chars["{"]) { blockState.close(true, "Unexpected character " + String.fromCharCode(charCode)); continue};
 
-                    state.blockState.type = Types.default;
-                    state.blockState.parsing_state = States.blockNameEnd;
+                    blockState.type = Types.default;
+                    blockState.parsing_state = States.blockNameEnd;
                     state.index --
 
-                } else if (state.blockState.parsingValueSequenceBroken) {state.exit(true, "Space in keyword names is not allowed"); continue} else state.blockState.parsingValueLength ++;
+                } else if (blockState.parsingValueSequenceBroken) {blockState.close(true, "Space in keyword names is not allowed"); continue} else blockState.parsingValueLength ++;
                 break;
 
 
             // End of a block name
             case States.blockNameEnd:
-                state.blockState.block.name = state.get_value()
+                const name = blockState.get_value();
+
+                blockState.block.name = name;
 
                 if(charCode === Chars["("]){
-                    state.blockState.parsing_state = States.attribute;
+                    const nextChar = state.buffer.charCodeAt(state.index +1);
+
+                    if(nextChar === Chars[")"]){
+                        blockState.type = Types.default;
+                        blockState.parsing_state = States.beforeProperties;
+                        state.index ++;
+                    } else blockState.begin_arbitrary_value(States.attribute);
+
                 } else if (charCode === Chars["{"]) {
-                    state.blockState.parsing_state = States.keywordSearch;
-                } else state.exit(true);
+                    blockState.parsing_state = States.keywordSearch;
+                } else blockState.close(true);
 
                 break;
-
-
-            // Attribute
-            case States.attribute:
-                if(charCode === Chars[")"] || charCode === Chars[","]){
-                    state.blockState.type = Types.default
-                    if(state.blockState.parsedString !== null) state.blockState.block.attributes.push(state.blockState.parsedString.trim())
-                    if(charCode === Chars[")"]) state.blockState.parsing_state = States.beforeProperties;
-                    break;
-                }
-
-                if(Match.stringChar(charCode)){
-                    state.blockState.stringChar = charCode
-
-                    state.blockState.next_parsing_state = States.attribute
-
-                    state.value_start(0, 1, Types.string)
-                } else if (Match.plain_value(charCode)){
-                    state.blockState.type = Types.plain
-
-                    state.blockState.next_parsing_state = States.attribute
-
-                    state.value_start(1)
-                } else state.exit(true)
-
-                break
 
 
             // Before a block
             case States.beforeProperties:
                 if(charCode === Chars[";"]){
-                    state.exit()
+                    blockState.block.isCall = true;
+                    blockState.close()
                     continue
                 }
 
                 if(charCode === Chars["{"]){
-                    state.blockState.parsing_state = States.keywordSearch
+                    blockState.parsing_state = States.keywordSearch
                     continue
                 }
 
-                state.exit(true);
+                blockState.close(true);
                 continue
 
 
             // Looking for a keyword
             case States.keywordSearch:
                 if(charCode === Chars["}"]){
-                    state.exit()
+                    blockState.close()
                     continue
                 }
 
-                if(!Match.keyword(charCode)) { state.exit(true); continue };
+                if(!Match.keyword(charCode)) { blockState.close(true); continue };
 
-                state.blockState.parsing_state = States.keyword
+                blockState.parsing_state = States.keyword
 
-                state.value_start(1, 0, Types.keyword)
+                blockState.value_start(1, 0, Types.keyword)
                 break
 
 
@@ -386,97 +409,144 @@ function parseAt(state){
             case States.keyword:
                 if(!Match.keyword(charCode)){
                     if(Match.whitespace(charCode)) {
-                        state.blockState.parsingValueSequenceBroken = true
+                        blockState.parsingValueSequenceBroken = true
                         break
                     }
 
-                    const key = state.get_value()
+                    const key = blockState.get_value()
 
-                    state.blockState.type = Types.default
+                    blockState.type = Types.default
 
                     if(charCode === Chars[";"] || charCode === Chars["}"]) {
 
-                        state.blockState.block.properties[key] = [true]
-                        state.blockState.parsing_state = States.keywordSearch
+                        blockState.block.properties[key] = [true]
+                        blockState.parsing_state = States.keywordSearch
 
                         if(charCode === Chars["}"]){
-                            state.exit()
+                            blockState.close()
                             continue
                         }
 
                     } else if (charCode === Chars[":"]) {
 
-                        state.blockState.last_key = key
-                        state.blockState.parsedString = null
-                        state.blockState.parsing_state = States.valueStart
+                        blockState.last_key = key
+                        blockState.begin_arbitrary_value(States.writeKeywordValue)
 
-                    } else { state.exit(true); continue };
+                    } else if (charCode === Chars["{"] || charCode === Chars["("]) {
+
+                        state.recursed ++;
+
+                        if(!state.recursionLevels) state.recursionLevels = [];
+
+                        let level = state.recursionLevels[state.recursed];
+                        if(!level) {
+                            level = new BlockState(state);
+                            state.recursionLevels[state.recursed] = level;
+                        }
+
+                        level.parsing_state = charCode === Chars["{"]? States.keywordSearch: States.blockNameEnd;
+
+                        if(charCode === Chars["("]) state.index --;
+
+                        parseAt(state, level);
+
+                        state.index --;
+
+                        blockState.block.properties[key] = level._returnedBlock;
+
+                        level._returnedBlock = null;
+
+                        blockState.parsing_state = States.keywordSearch
+
+                    } else { blockState.close(true); continue };
                 } else {
-                    if(state.blockState.parsingValueSequenceBroken) {
-                        state.exit(true)
+                    if(blockState.parsingValueSequenceBroken) {
+                        blockState.close(true)
                         continue
                     }
 
-                    state.blockState.parsingValueLength ++
+                    blockState.parsingValueLength ++
                 }
 
                 break;
 
 
-            // Start of a value
-            case States.valueStart:
-
-                // Push values
-                if(state.blockState.parsedString !== null){
-
-                    if(!state.blockState.current_value_isString){
-                        if(state.blockState.parsedString === "true") state.blockState.parsedString = true;
-                        else if(state.blockState.parsedString === "false") state.blockState.parsedString = false;
-                        else if(Match.digit(state.blockState.parsedString)) state.blockState.parsedString = Number(state.blockState.parsedString);
-                    }
-
-                    if(state.blockState.block.properties[state.blockState.last_key]) {
-                        state.blockState.block.properties[state.blockState.last_key].push(state.blockState.parsedString)
+            case States.writeKeywordValue:
+                if(blockState.parsedValue !== null){
+                    if(blockState.block.properties[blockState.last_key]) {
+                        blockState.block.properties[blockState.last_key].push(blockState.parsedValue)
                     } else {
-                        state.blockState.block.properties[state.blockState.last_key] = [state.blockState.parsedString]
+                        blockState.block.properties[blockState.last_key] = [blockState.parsedValue]
                     }
 
-                    state.blockState.parsedString = null
+                    blockState.parsedValue = null
                 }
-
-                state.blockState.current_value_isString = false;
 
                 if(charCode === Chars[","]){
 
-                    state.blockState.type = Types.default
-                    state.blockState.parsing_state = States.valueStart;
+                    blockState.type = Types.default
+                    blockState.parsing_state = States.arbitraryValue;
                     
                 } else if(charCode === Chars[";"]){
 
-                    state.blockState.type = Types.default
-                    state.blockState.parsing_state = States.keywordSearch;
+                    blockState.type = Types.default
+                    blockState.parsing_state = States.keywordSearch;
 
                 } else if(charCode === Chars["}"]){
 
-                    state.exit()
+                    blockState.close()
                     continue
 
-                } else {
-                    if(Match.stringChar(charCode)){
-                        state.blockState.current_value_isString = true;
-                        state.blockState.stringChar = charCode
-
-                        state.blockState.next_parsing_state = States.valueStart
-
-                        state.value_start(0, 1, Types.string)
-                    } else if (Match.plain_value(charCode)){
-                        state.blockState.current_value_isString = false;
-
-                        state.blockState.next_parsing_state = States.valueStart
-
-                        state.value_start(1, 0, Types.plain)
-                    } else state.exit(true)
                 }
+                break;
+
+
+            case States.attribute:
+                if(blockState.parsedValue !== null) {
+                    blockState.block.attributes.push(blockState.parsedValue);
+                    blockState.parsedValue = null;
+                }
+
+                blockState.type = Types.default;
+
+                if(charCode === Chars[")"]) blockState.parsing_state = States.beforeProperties;
+                if(charCode === Chars[","]) blockState.begin_arbitrary_value(States.attribute);
+                break;
+
+
+            // Beginning of a value
+            case States.arbitraryValue:
+                // TODO: Both attributes and values should be handled by the same state (all values)
+
+                if(Match.stringChar(charCode)){
+
+                    // Match strings
+                    // TODO: Remove escape characters from the string
+
+                    const stringChar = String.fromCharCode(charCode);
+
+                    blockState.value_start(0, 1)
+
+                    state.fastForwardTo(stringChar);
+
+                    // Do not remove the if statement, it is a significant performance improvement for strings without an escape character.
+                    if(state.buffer.charCodeAt(state.index) === Chars["\\"]){
+                        while(state.buffer.charCodeAt(state.index) === Chars["\\"] && state.index < state.buffer.length -1) {
+                            state.index++;
+                            state.fastForwardTo(stringChar);
+                        }
+                    }
+
+                    blockState.parsingValueLength = state.index - blockState.parsingValueStart +1;
+                    blockState.parsedValue = blockState.get_value();
+                    blockState.parsing_state = blockState.next_parsing_state;
+
+                } else if (Match.plain_value(charCode)){
+
+                    // Match plain values
+                    blockState.value_start(1, 0, Types.plain)
+
+                } else blockState.close(true)
                 break;
         }
     }
@@ -484,23 +554,25 @@ function parseAt(state){
 
 // Following are helper functions.
 
-function parse(data, options = {}){
+function parse(data, options = { asArray: true }){
     /*
 
-        A really fast parser for embedding dynamic behavior, config files, or any other use of the Atrium syntax.
+        A fast parser for dynamic embedding, config files, or any other use.
 
     */
-    
+
 
     // TODO: This should be moved to the parser itself!
     let offset = -1;
     if(options.embedded){
+
         offset = data.indexOf(Match.initiator);
     
         // Nothing to do, so just skip parsing entirely and return everything as text
         if(offset === -1) return options.onText && options.onText(data);
 
         if(options.onText) options.onText(data.substring(0, offset));
+
     } else {
 
         // Enable strict mode by default when not using embedded mode
@@ -509,27 +581,11 @@ function parse(data, options = {}){
     }
 
 
-    let result = null;
-    if(options.asArray) {
-        result = []
+    let collector = options.asArray? []: options.asLookupTable? new Map: null;
 
-        options._onBlock = function (block) {
-            result.push(block)
-        }
-    } else if(options.asLookupTable) {
-        result = new Map
+    new ParserState(options, { offset, collector }).write(data).end()
 
-        options._onBlock = function (block) {
-            if (!result.has(block.name)) {
-                result.set(block.name, []);
-            }
-
-            result.get(block.name).push(block);
-        }
-    }
-
-    new ParserState(options, { offset }).write(data)
-    return result;
+    return collector;
 }
 
 
@@ -538,40 +594,63 @@ function stringify(parsed){
 
     let result = "";
 
-    for(let array of parsed.values()){
-        for(let block of array){
-            if(!block) continue;
-    
-            result += `${
-                // Block name
-                block.name
-            }${
-                // Attributes
-                block.attributes.length > 1 || block.attributes[0].length > 0? ` (${block.attributes.map(value => {let quote = value.includes('"')? "'": '"'; return `${quote}${value}${quote}`}).join(", ") })` : ""
-            }${
-                // Properties
-                Object.keys(block.properties).length > 0? ` {\n    ${Object.keys(block.properties).map(key => `${key}${block.properties[key] === true? "": `: ${block.properties[key].map(value => {let quote = value.includes('"')? "'": '"'; return `${quote}${value}${quote}`}).join(", ")}`};`).join("\n    ")}\n}` : ";"
-            }\n\n`
+    function valueToString(value){
+        if(typeof value === "string") {let quote = value.includes('"')? "'": '"'; return `${quote}${value}${quote}`};
+        if(typeof value === "number") return value.toString();
+        if(typeof value === "boolean") return value? "true": "false";
+        return value
+    }
+
+    function stringifyBlock(block){
+        let result = `${block.name || ""}`;
+
+        if(block.attributes.length > 0) result += ` (${block.attributes.map(value => valueToString(value)).join(", ")})`;
+
+        if(Object.keys(block.properties).length > 0) {
+            result += " {\n";
+
+            for(let key in block.properties){
+                result += `${key}${
+                    Array.isArray(block.properties[key])?
+                        (block.properties[key][0] === true? "": `: ${block.properties[key].map(value => valueToString(value)).join(", ")}`) + ";":
+                        stringifyBlock(block.properties[key])
+                }`.split("\n").map(line => `    ${line}`).join("\n") + "\n"
+            }
+
+            result += "}"
+        } else result += ";";
+
+        return result
+    }
+
+    for(let name of parsed.keys()){
+        for(let block of parsed.get(name)){
+            result += stringifyBlock(block) + "\n\n"
         }
     }
-    
-    return result;
-    
+
+    return result
 }
 
 
 function merge(base, newConfig){
     if(!(base instanceof Map) || !(newConfig instanceof Map)) throw new Error("Both arguments for merging must be a lookup table.");
 
+    // Blocks are considered identical if they have no attributes.
+    // For example: `block { a: 1 }` and `block { b: 2 }` would be considered identical and their properties would be meged.
+    // However, if a block has any number of attributes, it is considered unique and will not be merged.
+
     for(let key of base.keys()){
         if(newConfig.has(key)){
+            // let baseBlocks = base.get(key);
+            // let newBlocks = newConfig.get(key);
             newConfig.set(key, [...base.get(key), ...newConfig.get(key)])
         } else {
             newConfig.set(key, base.get(key))
         }
     }
 
-    return newConfig // TODO: merge identical block's properties
+    return newConfig
 }
 
 
@@ -698,6 +777,6 @@ function configTools(parsed){
 }
 
 
-let _exports = { parse, parserStream: ParserState, Match, parseAt, stringify, merge, configTools };
+let _exports = { parse, parserStream: ParserState, BlockState, Match, parseAt, stringify, merge, configTools, version, v: parseInt(version[0]) };
 
 if(!globalThis.window) module.exports = _exports; else window.AtriumParser = _exports;

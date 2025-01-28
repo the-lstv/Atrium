@@ -29,7 +29,7 @@ Options include:
 - `asLookupTable`: if the parse function should a lookup map for efficient data access
 
 ### Syntax
-![Syntax](https://cdn.extragon.cloud/file/ef25afa3bf73cc5aa2f3f4ca2327ba15.png)
+![Syntax](https://github.com/user-attachments/assets/29618798-503f-464b-8028-7d9619207594)
 
 
 ### Streaming

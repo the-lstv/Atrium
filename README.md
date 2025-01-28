@@ -67,3 +67,9 @@ parse("<div> @hello { world } </div>", {
   }
 })
 ```
+### Performance
+Atrium is really highly optimized for both speed and memory efficiency (especially since recent releases).<br>
+This is so it can be used in places where latency and efficiency matter (like high-frequency webservers).<br>
+You can use this performance as an advantage for any usecase - from config files to realtime scripting.
+
+<img src="https://github.com/user-attachments/assets/e7c25ac9-4576-455b-94a9-093d7e53aae3">

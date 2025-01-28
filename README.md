@@ -1,7 +1,9 @@
 ![Group 357](https://github.com/user-attachments/assets/f6377875-ba97-4a1b-80aa-2ce5ff0374ae)
 
 Atrium is the parser that powers [Akeno](https://github.com/the-lstv/Akeno).<br>
-It is an extremely fast, highly configurable and versatile parser written in JavaScript.
+It is an extremely fast, memory-efficient and highly configurable and versatile parser written in JavaScript.
+
+It efficiently manages block states and only clones objects when necesarry.
 
 ---
 

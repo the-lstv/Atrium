@@ -1,4 +1,4 @@
-const version = "1.2.0";
+const version = "1.2.1";
 
 const States = {
     blockSearch: -1,
@@ -24,7 +24,6 @@ const Types = {
 
 
 const Match = {
-    // From: /[\w-.]/
     keyword(code) {
         return(
             (code >= 48 && code <= 57) || // 0-9
@@ -36,7 +35,6 @@ const Match = {
         )
     },
 
-    // From: /[\w-</>.*:]/
     plain_value(code) {
         return (
             (code >= 48 && code <= 57) || // 0-9
@@ -53,17 +51,14 @@ const Match = {
         )
     },
 
-    // From: /["'`]/
     stringChar(code) {
         return code === 34 || code === 39 || code === 96;
     },
 
-    // From: /[\s\n\r\t]/
     whitespace(code) {
         return code === 32 || code === 9 || code === 10 || code === 13;
     },
 
-    // From: /^\d+(\.\d+)?$/
     digit(str) {
         let dotSeen = false;
         for (let i = 0; i < str.length; i++) {
@@ -78,7 +73,6 @@ const Match = {
         return true;
     },
 
-    // From: /\d/
     number(code) {
         return code >= 48 && code <= 57;
     },
@@ -105,16 +99,15 @@ const Chars = {
 class ParserState {
     constructor(options, state = {}){
         this.options = options
-        this.offset = typeof state.offset === "number"? state.offset: -1
+        this.offset = typeof state.offset === "number"? state.offset: -1;
+        this.collector = state.collector || null;
         this.index = this.offset
         this.recursed = 0
         this.closedAtLevel = -1
 
-        this.recursionLevels = new Map;
+        this.recursionLevels = null;
 
         this.blockState = new BlockState(this)
-
-        this.recursionLevels.set(this.recursed, this.blockState)
     }
 
     fastForwardTo(char){
@@ -141,7 +134,14 @@ class ParserState {
     }
 
     end(){
-        // TODO:
+        // if(this.buffer) {
+        //     this.buffer = null
+        // }
+
+        // this.recursionLevels = null
+        // this.recursed = 0
+        // this.blockState = null
+        return this
     }
 }
 
@@ -199,14 +199,25 @@ class BlockState {
 
         if(!cancel) {
 
-            const block = this.clear(true)
-
-            if(!block.name) delete block.name;
+            const block = this.clear(true);
 
             // No error, send block for processing
             if(!recursive) {
-                if(this.parent.options._onBlock) this.parent.options._onBlock(block);
+
+                if(this.parent.collector) {
+                    if(this.parent.options.asArray) {
+                        this.parent.collector.push(block)
+                    } else if(this.parent.options.asLookupTable) {
+                        if(!this.parent.collector.has(block.name)) {
+                            this.parent.collector.set(block.name, []);
+                        }
+
+                        this.parent.collector.get(block.name).push(block);
+                    }
+                }
+
                 if(this.parent.options.onBlock) this.parent.options.onBlock(block);
+
             } else {
                 this._returnedBlock = block
             }
@@ -271,7 +282,7 @@ function parseAt(state, blockState){
 
         if(blockState.quit) {
             blockState.quit = false
-            return blockState
+            return
         }
 
         if(blockState.type === Types.plain){
@@ -425,10 +436,12 @@ function parseAt(state, blockState){
 
                         state.recursed ++;
 
-                        let level = state.recursionLevels.get(state.recursed);
+                        if(!state.recursionLevels) state.recursionLevels = [];
+
+                        let level = state.recursionLevels[state.recursed];
                         if(!level) {
                             level = new BlockState(state);
-                            state.recursionLevels.set(state.recursed, level)
+                            state.recursionLevels[state.recursed] = level;
                         }
 
                         level.parsing_state = charCode === Chars["{"]? States.keywordSearch: States.blockNameEnd;
@@ -487,6 +500,7 @@ function parseAt(state, blockState){
                 }
                 break;
 
+
             case States.attribute:
                 if(blockState.parsedValue !== null) {
                     blockState.block.attributes.push(blockState.parsedValue);
@@ -515,15 +529,16 @@ function parseAt(state, blockState){
 
                     state.fastForwardTo(stringChar);
 
-                    while(state.buffer.charCodeAt(state.index) === Chars["\\"] && state.index < state.buffer.length -1) {
-                        state.index++;
-                        state.fastForwardTo(stringChar);
+                    // Do not remove the if statement, it is a significant performance improvement for strings without an escape character.
+                    if(state.buffer.charCodeAt(state.index) === Chars["\\"]){
+                        while(state.buffer.charCodeAt(state.index) === Chars["\\"] && state.index < state.buffer.length -1) {
+                            state.index++;
+                            state.fastForwardTo(stringChar);
+                        }
                     }
 
                     blockState.parsingValueLength = state.index - blockState.parsingValueStart +1;
-
                     blockState.parsedValue = blockState.get_value();
-
                     blockState.parsing_state = blockState.next_parsing_state;
 
                 } else if (Match.plain_value(charCode)){
@@ -542,7 +557,7 @@ function parseAt(state, blockState){
 function parse(data, options = { asArray: true }){
     /*
 
-        A really fast parser for embedding dynamic behavior, config files, or any other use of the Atrium syntax.
+        A fast parser for dynamic embedding, config files, or any other use.
 
     */
 
@@ -550,12 +565,14 @@ function parse(data, options = { asArray: true }){
     // TODO: This should be moved to the parser itself!
     let offset = -1;
     if(options.embedded){
+
         offset = data.indexOf(Match.initiator);
     
         // Nothing to do, so just skip parsing entirely and return everything as text
         if(offset === -1) return options.onText && options.onText(data);
 
         if(options.onText) options.onText(data.substring(0, offset));
+
     } else {
 
         // Enable strict mode by default when not using embedded mode
@@ -564,27 +581,11 @@ function parse(data, options = { asArray: true }){
     }
 
 
-    let result = null;
-    if(options.asArray) {
-        result = []
+    let collector = options.asArray? []: options.asLookupTable? new Map: null;
 
-        options._onBlock = function (block) {
-            result.push(block)
-        }
-    } else if(options.asLookupTable) {
-        result = new Map
+    new ParserState(options, { offset, collector }).write(data).end()
 
-        options._onBlock = function (block) {
-            if (!result.has(block.name)) {
-                result.set(block.name, []);
-            }
-
-            result.get(block.name).push(block);
-        }
-    }
-
-    new ParserState(options, { offset }).write(data)
-    return result;
+    return collector;
 }
 
 
@@ -593,40 +594,63 @@ function stringify(parsed){
 
     let result = "";
 
-    for(let array of parsed.values()){
-        for(let block of array){
-            if(!block) continue;
-    
-            result += `${
-                // Block name
-                block.name
-            }${
-                // Attributes
-                block.attributes.length > 1 || block.attributes[0].length > 0? ` (${block.attributes.map(value => {let quote = value.includes('"')? "'": '"'; return `${quote}${value}${quote}`}).join(", ") })` : ""
-            }${
-                // Properties
-                Object.keys(block.properties).length > 0? ` {\n    ${Object.keys(block.properties).map(key => `${key}${block.properties[key] === true? "": `: ${block.properties[key].map(value => {let quote = value.includes('"')? "'": '"'; return `${quote}${value}${quote}`}).join(", ")}`};`).join("\n    ")}\n}` : ";"
-            }\n\n`
+    function valueToString(value){
+        if(typeof value === "string") {let quote = value.includes('"')? "'": '"'; return `${quote}${value}${quote}`};
+        if(typeof value === "number") return value.toString();
+        if(typeof value === "boolean") return value? "true": "false";
+        return value
+    }
+
+    function stringifyBlock(block){
+        let result = `${block.name || ""}`;
+
+        if(block.attributes.length > 0) result += ` (${block.attributes.map(value => valueToString(value)).join(", ")})`;
+
+        if(Object.keys(block.properties).length > 0) {
+            result += " {\n";
+
+            for(let key in block.properties){
+                result += `${key}${
+                    Array.isArray(block.properties[key])?
+                        (block.properties[key][0] === true? "": `: ${block.properties[key].map(value => valueToString(value)).join(", ")}`) + ";":
+                        stringifyBlock(block.properties[key])
+                }`.split("\n").map(line => `    ${line}`).join("\n") + "\n"
+            }
+
+            result += "}"
+        } else result += ";";
+
+        return result
+    }
+
+    for(let name of parsed.keys()){
+        for(let block of parsed.get(name)){
+            result += stringifyBlock(block) + "\n\n"
         }
     }
-    
-    return result;
-    
+
+    return result
 }
 
 
 function merge(base, newConfig){
     if(!(base instanceof Map) || !(newConfig instanceof Map)) throw new Error("Both arguments for merging must be a lookup table.");
 
+    // Blocks are considered identical if they have no attributes.
+    // For example: `block { a: 1 }` and `block { b: 2 }` would be considered identical and their properties would be meged.
+    // However, if a block has any number of attributes, it is considered unique and will not be merged.
+
     for(let key of base.keys()){
         if(newConfig.has(key)){
+            // let baseBlocks = base.get(key);
+            // let newBlocks = newConfig.get(key);
             newConfig.set(key, [...base.get(key), ...newConfig.get(key)])
         } else {
             newConfig.set(key, base.get(key))
         }
     }
 
-    return newConfig // TODO: merge identical block's properties
+    return newConfig
 }
 
 

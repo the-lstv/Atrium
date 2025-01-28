@@ -642,8 +642,6 @@ function merge(base, newConfig){
 
     for(let key of base.keys()){
         if(newConfig.has(key)){
-            // let baseBlocks = base.get(key);
-            // let newBlocks = newConfig.get(key);
             newConfig.set(key, [...base.get(key), ...newConfig.get(key)])
         } else {
             newConfig.set(key, base.get(key))

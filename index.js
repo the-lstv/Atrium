@@ -3,13 +3,12 @@ const version = "1.2.1";
 const States = {
     blockSearch: -1,
     blockName: 0,
-    blockNameEnd: 1,
-    attribute: 2,
-    beforeProperties: 3,
-    keywordSearch: 4,
-    keyword: 5,
-    arbitraryValue: 6,
-    writeKeywordValue: 7
+    attribute: 1,
+    beforeProperties: 2,
+    keywordSearch: 3,
+    keyword: 4,
+    arbitraryValue: 5,
+    writeKeywordValue: 6
 }
 
 
@@ -95,6 +94,9 @@ const Chars = {
     "\\": 92
 }
 
+/**
+ * @description This class holds the current position and state in the parsed buffer.
+ */
 
 class ParserState {
     constructor(options, state = {}){
@@ -107,7 +109,7 @@ class ParserState {
 
         this.recursionLevels = null;
 
-        this.blockState = new BlockState(this)
+        this.blockState = new BlockState(this);
     }
 
     fastForwardTo(char){
@@ -128,23 +130,40 @@ class ParserState {
         this.index = this.offset
         // this.blockState.parsingValueStart = this.index +1;
         // this.blockState.parsingValueLength = 0;
-        this.offset = -1
+        
+        if(this.options.embedded){
+
+            this.offset = chunk.indexOf(Match.initiator);
+            
+            // Nothing to do, so just skip parsing entirely and return everything as text
+            if(this.offset === -1) return this.options.onText && this.options.onText(chunk);
+    
+            if(this.options.onText) this.options.onText(chunk.substring(0, this.offset));
+
+        } else {
+            this.offset = -1;
+        }
+            
+
         parseAt(this, this.blockState)
         return this
     }
 
     end(){
-        // if(this.buffer) {
-        //     this.buffer = null
-        // }
+        if(this.buffer) {
+            this.buffer = null
+        }
 
-        // this.recursionLevels = null
-        // this.recursed = 0
-        // this.blockState = null
+        this.recursionLevels = null
+        this.recursed = 0
+        this.blockState = null
         return this
     }
 }
 
+/**
+ * @description Holds information on the current block being parsed. This works in layers - each instance of BlockState handles a full recursion layer. Eg. if the code has up to 4 nested layers, up to 4 instances of BlockState will be used for the full code.
+ */
 
 class BlockState {
     constructor(parent){
@@ -237,7 +256,7 @@ class BlockState {
             this.quit = true
         }
 
-        this.parent.index++;
+        // this.parent.index++;
 
         if(this.parent.options.embedded) {
 
@@ -274,6 +293,12 @@ class BlockState {
     }
 }
 
+/**
+ * @description Resume parsing from a specific state.
+ * @param {ParserState} state
+ * @param {BlockState} blockState
+ * @returns {void}
+ */
 
 function parseAt(state, blockState){
     if(state.index >= state.buffer.length -1) return;
@@ -341,37 +366,34 @@ function parseAt(state, blockState){
                         break
                     }
 
-                    if(charCode !== Chars["("] && charCode !== Chars["{"]) { blockState.close(true, "Unexpected character " + String.fromCharCode(charCode)); continue};
-
                     blockState.type = Types.default;
-                    blockState.parsing_state = States.blockNameEnd;
-                    state.index --
+                    
+                    const name = blockState.get_value();
+
+                    blockState.block.name = name;
+
+                    if(charCode === Chars["("]){
+                        const nextChar = state.buffer.charCodeAt(state.index +1);
+
+                        if(nextChar === Chars[")"]){
+                            blockState.type = Types.default;
+                            blockState.parsing_state = States.beforeProperties;
+                            state.index ++;
+                        } else blockState.begin_arbitrary_value(States.attribute);
+
+                    } else if (charCode === Chars["{"]) {
+                        blockState.parsing_state = States.keywordSearch;
+                    }
+
+                    else if (charCode === Chars[";"]) {
+                        blockState.close()
+                        continue
+                    }
+
+                    else blockState.close(true, "Unexpected character " + String.fromCharCode(charCode))
 
                 } else if (blockState.parsingValueSequenceBroken) {blockState.close(true, "Space in keyword names is not allowed"); continue} else blockState.parsingValueLength ++;
                 break;
-
-
-            // End of a block name
-            case States.blockNameEnd:
-                const name = blockState.get_value();
-
-                blockState.block.name = name;
-
-                if(charCode === Chars["("]){
-                    const nextChar = state.buffer.charCodeAt(state.index +1);
-
-                    if(nextChar === Chars[")"]){
-                        blockState.type = Types.default;
-                        blockState.parsing_state = States.beforeProperties;
-                        state.index ++;
-                    } else blockState.begin_arbitrary_value(States.attribute);
-
-                } else if (charCode === Chars["{"]) {
-                    blockState.parsing_state = States.keywordSearch;
-                } else blockState.close(true);
-
-                break;
-
 
             // Before a block
             case States.beforeProperties:
@@ -444,7 +466,7 @@ function parseAt(state, blockState){
                             state.recursionLevels[state.recursed] = level;
                         }
 
-                        level.parsing_state = charCode === Chars["{"]? States.keywordSearch: States.blockNameEnd;
+                        level.parsing_state = charCode === Chars["{"]? States.keywordSearch: States.blockName;
 
                         if(charCode === Chars["("]) state.index --;
 
@@ -554,36 +576,21 @@ function parseAt(state, blockState){
 
 // Following are helper functions.
 
+/**
+ * @description Parses a block of code. This is a helper function used when you have the full code (not streaming).
+ * @param {string} data
+ * @param {object} options
+ * @returns {null | Array | Map<string, Array>}
+ */
+
 function parse(data, options = { asArray: true }){
-    /*
-
-        A fast parser for dynamic embedding, config files, or any other use.
-
-    */
-
-
-    // TODO: This should be moved to the parser itself!
-    let offset = -1;
-    if(options.embedded){
-
-        offset = data.indexOf(Match.initiator);
-    
-        // Nothing to do, so just skip parsing entirely and return everything as text
-        if(offset === -1) return options.onText && options.onText(data);
-
-        if(options.onText) options.onText(data.substring(0, offset));
-
-    } else {
-
-        // Enable strict mode by default when not using embedded mode
+    if(!options.embedded){
         if(typeof options.strict === "undefined") options.strict = true;
-
     }
-
 
     let collector = options.asArray? []: options.asLookupTable? new Map: null;
 
-    new ParserState(options, { offset, collector }).write(data).end()
+    new ParserState(options, { collector }).write(data).end()
 
     return collector;
 }
@@ -632,6 +639,103 @@ function stringify(parsed){
     return result
 }
 
+/**
+ * @description Slices raw code into tokens for syntax highlighting.
+ * @param {string} code
+ * @returns {array}
+ */
+
+function slice(code){
+    const state = new ParserState({});
+
+    state.buffer = code;
+
+    if(state.index >= state.buffer.length -1) return;
+
+    const tokens = [];
+    let token = { type: null, value: "" };
+
+    function pushChar(swap, char){
+        if(token.type === null) token.type = swap;
+
+        if(token.type !== swap) {
+            if(token.value.length > 0) {
+                if(isValue) {
+                    if(token.value === "true" || token.value === "false") token.type = "boolean";
+                    else if(Match.digit(token.value)) token.type = "number";
+                }
+
+                tokens.push(token)
+            }
+
+            if(unbecomeValue) isValue = unbecomeValue = false;
+
+            token = { type: swap, value: char };
+        } else {
+            token.value += char;
+        }
+    }
+
+    let stringChar = null, isComment = false, isValue = false, unbecomeValue = false;
+
+    while(++state.index < state.buffer.length){
+        const charCode = state.buffer.charCodeAt(state.index), char = state.buffer[state.index];
+        let type = null;
+
+        if(isComment){
+            if(charCode === 10) {
+                pushChar("comment", char);
+                isComment = false;
+            } else token.value += char;
+            continue
+        }
+
+        if(stringChar){
+            if(charCode === stringChar) {
+                pushChar("string", char);
+                stringChar = null;
+            } else token.value += char;
+            continue
+        }
+
+        switch(true){
+            case Match.keyword(charCode):
+                type = "keyword";
+                break
+
+            case Match.whitespace(charCode):
+                type = "whitespace";
+                break
+
+            case charCode === 35:
+                type = "comment";
+                isComment = true;
+                break
+            
+            case Match.stringChar(charCode):
+                type = "string";
+                stringChar = charCode;
+                break
+
+            case ["{", "}", "(", ")", ",", ";", ":"].includes(char):
+                type = "symbol";
+
+                if(char === "{" || char === "(") isValue = true;
+                if(char === "}" || char === ")") unbecomeValue = true;
+                break
+
+            default:
+                type = "plain";
+                break
+        }
+
+        pushChar(type, char);
+    }
+
+    if(token.value.length > 0) tokens.push(token);
+
+    return tokens
+}
 
 function merge(base, newConfig){
     if(!(base instanceof Map) || !(newConfig instanceof Map)) throw new Error("Both arguments for merging must be a lookup table.");
@@ -777,6 +881,6 @@ function configTools(parsed){
 }
 
 
-let _exports = { parse, parserStream: ParserState, BlockState, Match, parseAt, stringify, merge, configTools, version, v: parseInt(version[0]) };
+let _exports = { parse, parserStream: ParserState, BlockState, Match, parseAt, stringify, slice, merge, configTools, version, v: parseInt(version[0]) };
 
 if(!globalThis.window) module.exports = _exports; else window.AtriumParser = _exports;

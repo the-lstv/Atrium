@@ -1,5 +1,5 @@
 # testing/debug page
-*.html
+# *.html
 
 # possible future feature
 inliner

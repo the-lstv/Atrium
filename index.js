@@ -1,4 +1,4 @@
-const version = "1.2.1";
+const version = "1.2.2";
 
 const States = {
     blockSearch: -1,
@@ -146,6 +146,8 @@ class ParserState {
             
 
         parseAt(this, this.blockState)
+
+        // this.blockState.close();
         return this
     }
 
@@ -238,7 +240,7 @@ class BlockState {
                 if(this.parent.options.onBlock) this.parent.options.onBlock(block);
 
             } else {
-                this._returnedBlock = block
+                this.parentBlock.block.properties[this.parentBlock.last_key] = block;
             }
 
         } else {
@@ -255,8 +257,6 @@ class BlockState {
         if(recursive) {
             this.quit = true
         }
-
-        // this.parent.index++;
 
         if(this.parent.options.embedded) {
 
@@ -305,9 +305,13 @@ function parseAt(state, blockState){
 
     while(++state.index < state.buffer.length){
 
+        // Go up in the stack
         if(blockState.quit) {
+            const parent = blockState.parentBlock;
             blockState.quit = false
-            return
+            blockState.parentBlock = null;
+
+            blockState = parent
         }
 
         if(blockState.type === Types.plain){
@@ -466,19 +470,15 @@ function parseAt(state, blockState){
                             state.recursionLevels[state.recursed] = level;
                         }
 
+                        blockState.last_key = key
+                        blockState.parsing_state = States.keywordSearch
+
                         level.parsing_state = charCode === Chars["{"]? States.keywordSearch: States.blockName;
 
                         if(charCode === Chars["("]) state.index --;
 
-                        parseAt(state, level);
-
-                        state.index --;
-
-                        blockState.block.properties[key] = level._returnedBlock;
-
-                        level._returnedBlock = null;
-
-                        blockState.parsing_state = States.keywordSearch
+                        level.parentBlock = blockState
+                        blockState = level
 
                     } else { blockState.close(true); continue };
                 } else {

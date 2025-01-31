@@ -8,11 +8,13 @@
 
     <div class="error" hidden></div>
 
+    <label>
+        Embedded mode
+        <input type="checkbox" id="embedded">
+    </label>
+
     <div class="editor-container">
-        <textarea class="editor">a {
-    b }
-}
-</textarea>
+        <textarea class="editor"></textarea>
     </div>
 
     
@@ -126,11 +128,24 @@
         error.style.display = 'none';
         const text = editor.value // editor.innerText;
         // highlighting.innerHTML = highlight(text) + "<br>";
+
+        error.innerHTML = '';
         
-        preview.innerHTML = highlight(AtriumParser.stringify(AtriumParser.parse(text, { asLookupTable: true, strict: true, onError(err) {
-            error.style.display = 'block';
-            error.innerHTML = err.message;
-        } })));
+        preview.innerHTML = highlight(AtriumParser.stringify(AtriumParser.parse(text, {
+            asLookupTable: true,
+            strict: true,
+            embedded: document.getElementById('embedded').checked,
+
+            onError(err) {
+                error.style.display = 'block';
+                error.innerHTML = err.message;
+            },
+
+            // onText(text) {
+            //     error.style.display = 'block';
+            //     error.innerHTML += text;
+            // },
+        })));
     }
 
     editor.addEventListener("input", syncHighlighting);

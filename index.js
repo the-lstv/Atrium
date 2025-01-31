@@ -127,10 +127,7 @@ class ParserState {
     write(chunk){
         if(this.buffer) throw ".write called more than once: Sorry, streaming is currently not supported. Please check for latest updates.";
         this.buffer = chunk
-        this.index = this.offset
-        // this.blockState.parsingValueStart = this.index +1;
-        // this.blockState.parsingValueLength = 0;
-        
+
         if(this.options.embedded){
 
             this.offset = chunk.indexOf(Match.initiator);
@@ -145,9 +142,11 @@ class ParserState {
         }
             
 
-        parseAt(this, this.blockState)
+        this.index = this.offset
+        this.blockState.parsingValueStart = this.index +1;
+        this.blockState.parsingValueLength = 0;
 
-        // this.blockState.close();
+        parseAt(this, this.blockState)
         return this
     }
 
@@ -262,14 +261,15 @@ class BlockState {
 
             const start = this.parent.index;
             const found = this.parent.fastForwardTo(Match.initiator)
+            
+            if(this.parent.options.onText) this.parent.options.onText(this.parent.buffer.slice(start +1, this.parent.index +1));
 
             if(found){
                 this.parent.index++;
-                this.parent.parsingValueStart = this.parent.index +1
+                this.parsingValueStart = this.parent.index +1
+                // this.blockState.parsingValueStart = this.index +1;
+                this.parsingValueLength = 0;
             }
-
-            if(this.parent.options.onText) this.parent.options.onText(this.parent.buffer.slice(start, this.parent.index));
-
         }
     }
 
@@ -584,13 +584,11 @@ function parseAt(state, blockState){
  */
 
 function parse(data, options = { asArray: true }){
-    if(!options.embedded){
-        if(typeof options.strict === "undefined") options.strict = true;
-    }
+    if(!options.embedded && typeof options.strict === "undefined") options.strict = true;
 
     let collector = options.asArray? []: options.asLookupTable? new Map: null;
 
-    new ParserState(options, { collector }).write(data).end()
+    new ParserState(options, { collector }).write(data)
 
     return collector;
 }

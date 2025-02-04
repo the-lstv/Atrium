@@ -149,6 +149,7 @@
     }
 
     editor.addEventListener("input", syncHighlighting);
+    document.getElementById('embedded').addEventListener("click", syncHighlighting);
     // editor.addEventListener("keydown", (e) => {
     //     if (e.key === "Tab") {
     //         e.preventDefault();

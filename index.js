@@ -173,10 +173,12 @@ class BlockState {
     }
 
     clear(returnBlock = false){
-        this.parsing_state = this.parent.options.embedded? States.blockName: States.blockSearch;
+        const embedded = this.parent.options.embedded && this.parent.recursed === 0;
+
+        this.parsing_state = embedded? States.blockName: States.blockSearch;
         this.next_parsing_state = 0;
         this.parsedValue = null;
-        this.type = this.parent.options.embedded? 1: 0;
+        this.type = embedded? 1: 0;
         this.parsingValueStart = this.parent.index;
         this.parsingValueLength = 0;
         this.parsingValueSequenceBroken = false;
@@ -254,10 +256,10 @@ class BlockState {
         }
 
         if(recursive) {
-            this.quit = true
-        }
 
-        if(this.parent.options.embedded) {
+            this.quit = true
+
+        } else if(this.parent.options.embedded) {
 
             const start = this.parent.index;
             const found = this.parent.fastForwardTo(Match.initiator)
@@ -519,6 +521,13 @@ function parseAt(state, blockState){
                     blockState.close()
                     continue
 
+                } else {
+
+                    state.index --;
+                    blockState.type = Types.default
+                    blockState.parsing_state = States.arbitraryValue;
+
+                    // blockState.close(true, "Unexpected character in keyword value" + String.fromCharCode(charCode))
                 }
                 break;
 
@@ -551,7 +560,7 @@ function parseAt(state, blockState){
 
                     state.fastForwardTo(stringChar);
 
-                    // Do not remove the if statement, it is a significant performance improvement for strings without an escape character.
+                    // Do not remove the if statement, it is a performance improvement
                     if(state.buffer.charCodeAt(state.index) === Chars["\\"]){
                         while(state.buffer.charCodeAt(state.index) === Chars["\\"] && state.index < state.buffer.length -1) {
                             state.index++;
@@ -562,13 +571,14 @@ function parseAt(state, blockState){
                     blockState.parsingValueLength = state.index - blockState.parsingValueStart +1;
                     blockState.parsedValue = blockState.get_value();
                     blockState.parsing_state = blockState.next_parsing_state;
+                    state.index++;
 
                 } else if (Match.plain_value(charCode)){
 
                     // Match plain values
                     blockState.value_start(1, 0, Types.plain)
 
-                } else blockState.close(true)
+                } else blockState.close(true, "Unexpected character in arbitrary value " + String.fromCharCode(charCode))
                 break;
         }
     }
@@ -617,7 +627,7 @@ function stringify(parsed){
             for(let key in block.properties){
                 result += `${key}${
                     Array.isArray(block.properties[key])?
-                        (block.properties[key][0] === true? "": `: ${block.properties[key].map(value => valueToString(value)).join(", ")}`) + ";":
+                        ((block.properties[key].length === 1 && block.properties[key][0] === true)? "": `: ${block.properties[key].map(value => valueToString(value)).join(", ")}`) + ";":
                         stringifyBlock(block.properties[key])
                 }`.split("\n").map(line => `    ${line}`).join("\n") + "\n"
             }

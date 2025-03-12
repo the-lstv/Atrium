@@ -46,6 +46,7 @@ const Match = {
             code === 58 || // :
             code === 60 || // <
             code === 62 || // >
+            code === 33 || // !
             code === 47    // /
         )
     },
@@ -91,8 +92,42 @@ const Chars = {
     ":": 58,
     ";": 59,
     "#": 35,
+    "[": 91,
+    "]": 93,
     "\\": 92
 }
+
+
+/**
+ * @description This is a currently unimplemented class.
+ */
+
+class StringView {
+    constructor(buffer, start = 0, end = buffer.length){
+        this.buffer = buffer
+        this.start = start
+        this.end = end
+
+        this.slice = this.substring
+    }
+
+    charCodeAt(index){
+        return this.buffer[index]
+    }
+
+    substring(start, end){
+        return new StringView(this.buffer, start, end)
+    }
+
+    data(){
+        return (this.start === 0 && this.end === this.buffer.length)? this.buffer : this.buffer.subarray(this.start, this.end)
+    }
+
+    toString(){
+        return this.buffer.subarray(this.start, this.end).toString()
+    }
+}
+
 
 /**
  * @description This class holds the current position and state in the parsed buffer.
@@ -178,6 +213,7 @@ class BlockState {
         this.parsing_state = embedded? States.blockName: States.blockSearch;
         this.next_parsing_state = 0;
         this.parsedValue = null;
+        this.valueTarget = null;
         this.type = embedded? 1: 0;
         this.parsingValueStart = this.parent.index;
         this.parsingValueLength = 0;
@@ -280,7 +316,7 @@ class BlockState {
         this.parsingValueStart = this.parent.index + positionOffset;
         this.parsingValueLength = length;
         this.parsingValueSequenceBroken = false;
-        this.parsedValue = null;
+        if(_type === Types.keyword) this.parsedValue = null;
     }
 
     get_value(){
@@ -292,6 +328,7 @@ class BlockState {
         this.parsing_state = States.arbitraryValue
         this.type = Types.default
         this.next_parsing_state = returnTo
+        this.valueTarget = null;
     }
 }
 
@@ -318,14 +355,28 @@ function parseAt(state, blockState){
 
         if(blockState.type === Types.plain){
             if (!Match.plain_value(state.buffer.charCodeAt(state.index))) {
-                blockState.parsedValue = blockState.get_value()
+                let parsed = blockState.get_value();
+                if(parsed === "true") parsed = true;
+                else if(parsed === "false") parsed = false;
+                else if(Match.digit(parsed)) parsed = parseInt(parsed);
 
-                if(blockState.parsedValue === "true") blockState.parsedValue = true;
-                else if(blockState.parsedValue === "false") blockState.parsedValue = false;
-                else if(Match.digit(blockState.parsedValue)) blockState.parsedValue = Number(blockState.parsedValue);
+                if(Array.isArray(blockState.valueTarget)) {
+
+                    blockState.valueTarget.push(parsed);
+
+                } else if(state.buffer.charCodeAt(state.index) === Chars["["]) {
+
+                    blockState.parsedValue = {name: parsed, values: []};
+                    blockState.valueTarget = blockState.parsedValue.values;
+                    
+                    state.index ++;
+
+                } else {
+                    blockState.parsedValue = parsed;
+                    blockState.parsing_state = blockState.next_parsing_state;
+                }
 
                 blockState.type = Types.default
-                blockState.parsing_state = blockState.next_parsing_state
             } else {
                 blockState.parsingValueLength++
                 continue
@@ -511,7 +562,7 @@ function parseAt(state, blockState){
 
                     blockState.type = Types.default
                     blockState.parsing_state = States.arbitraryValue;
-                    
+
                 } else if(charCode === Chars[";"]){
 
                     blockState.type = Types.default
@@ -550,6 +601,23 @@ function parseAt(state, blockState){
             case States.arbitraryValue:
                 // TODO: Both attributes and values should be handled by the same state (all values)
 
+                if(Array.isArray(blockState.valueTarget)){
+                    if(charCode == Chars[","]) {
+                        break
+                    }
+
+                    if(charCode == Chars["]"]) {
+                        blockState.parsing_state = blockState.next_parsing_state;
+                        break
+                    }
+                } else {
+                    if(charCode == Chars["["]) {
+                        blockState.valueTarget = blockState.parsedValue = [];
+                        break
+                    }
+                }
+
+
                 if(Match.stringChar(charCode)){
 
                     // Match strings
@@ -570,8 +638,14 @@ function parseAt(state, blockState){
                     }
 
                     blockState.parsingValueLength = state.index - blockState.parsingValueStart +1;
-                    blockState.parsedValue = blockState.get_value();
-                    blockState.parsing_state = blockState.next_parsing_state;
+                    
+                    if(Array.isArray(blockState.valueTarget)) {
+                        blockState.valueTarget.push(blockState.get_value());
+                    } else {
+                        blockState.parsedValue = blockState.get_value();
+                        blockState.parsing_state = blockState.next_parsing_state;
+                    }
+
                     state.index++;
 
                 } else if (Match.plain_value(charCode)){
@@ -610,9 +684,24 @@ function stringify(parsed){
 
     let result = "";
 
+    function encodeArray(array){
+        return `[${array.map(value => valueToString(value)).join(", ")}]`
+    }
+
     function valueToString(value){
+        // Array
+        if(Array.isArray(value)) return encodeArray(value);
+
+        // Named array
+        if(typeof value === "object") return `${value.name}${encodeArray(value.values)}`;
+
+        // String
         if(typeof value === "string") {let quote = value.includes('"')? "'": '"'; return `${quote}${value}${quote}`};
+
+        // Number
         if(typeof value === "number") return value.toString();
+
+        // Boolean
         if(typeof value === "boolean") return value? "true": "false";
         return value
     }

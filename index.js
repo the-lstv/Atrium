@@ -474,8 +474,9 @@ function parseAt(state, blockState){
 
                         blockState.last_key = key
                         blockState.parsing_state = States.keywordSearch
-
+                        
                         level.parsing_state = charCode === Chars["{"]? States.keywordSearch: States.blockName;
+                        level.type = Types.default
 
                         if(charCode === Chars["("]) state.index --;
 

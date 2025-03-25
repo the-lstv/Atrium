@@ -104,19 +104,31 @@ const Chars = {
 
 class StringView {
     constructor(buffer, start = 0, end = buffer.length){
-        this.buffer = buffer
-        this.start = start
-        this.end = end
-
-        this.slice = this.substring
+        this.buffer = buffer;
+        this.start = start;
+        this.end = end;
+        this.cached = null
     }
 
     charCodeAt(index){
+        index += this.start
+        if (index < this.start || index >= this.end) return NaN
         return this.buffer[index]
     }
 
-    substring(start, end){
+    charAt(index){
+        const char = this.charCodeAt(index);
+        return isNaN(char)? "": String.fromCharCode(char)
+    }
+
+    slice(start, end){
+        start = Math.max(this.start + start, this.start)
+        end = Math.min(this.start + (end ?? this.end), this.end)
         return new StringView(this.buffer, start, end)
+    }
+
+    substring(start, end){
+        return this.slice(start, end)
     }
 
     data(){
@@ -124,8 +136,19 @@ class StringView {
     }
 
     toString(){
-        return this.buffer.subarray(this.start, this.end).toString()
+        if(this.cached) return this.cached;
+
+        if (this.buffer instanceof Uint8Array) return this.cached = StringView.decoder.decode(this.data());
+        if (this.buffer instanceof Uint16Array) return this.cached = String.fromCharCode(...this.data());
+        return this.cached = this.data().toString()
     }
+
+    get length(){
+        return this.end - this.start
+    }
+
+    static decoder = new TextDecoder()
+    static encoder = new TextEncoder()
 }
 
 
@@ -148,10 +171,10 @@ class ParserState {
     }
 
     fastForwardTo(char){
-        const index = this.buffer.indexOf(char, this.index +1)
+        const index = this.chunk.indexOf(char, this.index +1)
 
         if(index === -1) {
-            this.index = this.buffer.length;
+            this.index = this.chunk.length;
             return false
         }
 
@@ -160,8 +183,8 @@ class ParserState {
     }
 
     write(chunk){
-        if(this.buffer) throw ".write called more than once: Sorry, streaming is currently not supported. Please check for latest updates.";
-        this.buffer = chunk
+        if(this.chunk) throw ".write called more than once: Sorry, streaming is currently not supported. Please check for latest updates.";
+        this.chunk = chunk
 
         if(this.options.embedded){
 
@@ -186,8 +209,8 @@ class ParserState {
     }
 
     end(){
-        if(this.buffer) {
-            this.buffer = null
+        if(this.chunk) {
+            this.chunk = null
         }
 
         this.recursionLevels = null
@@ -286,7 +309,7 @@ class BlockState {
 
             const error = new Error("[Parser Syntax Error] " + (message || "") + "\n  (at character " + this.parent.index + ")");
 
-            if(this.parent.options.strict) this.parent.index = this.parent.buffer.length; // Skip to the end of the file
+            if(this.parent.options.strict) this.parent.index = this.parent.chunk.length; // Skip to the end of the file
             if(typeof this.parent.options.onError === "function") this.parent.options.onError(error);
 
         }
@@ -300,7 +323,7 @@ class BlockState {
             const start = this.parent.index;
             const found = this.parent.fastForwardTo(Match.initiator)
             
-            if(this.parent.options.onText) this.parent.options.onText(this.parent.buffer.slice(start +1, this.parent.index +1));
+            if(this.parent.options.onText) this.parent.options.onText(this.parent.chunk.slice(start +1, this.parent.index +1));
 
             if(found){
                 this.parent.index++;
@@ -320,7 +343,7 @@ class BlockState {
     }
 
     get_value(){
-        return this.parent.buffer.slice(this.parsingValueStart, this.parsingValueStart + this.parsingValueLength)
+        return this.parent.chunk.slice(this.parsingValueStart, this.parsingValueStart + this.parsingValueLength)
     }
 
     begin_arbitrary_value(returnTo){
@@ -340,9 +363,9 @@ class BlockState {
  */
 
 function parseAt(state, blockState){
-    if(state.index >= state.buffer.length -1) return;
+    if(state.index >= state.chunk.length -1) return;
 
-    while(++state.index < state.buffer.length){
+    while(++state.index < state.chunk.length){
 
         // Go up in the stack
         if(blockState.quit) {
@@ -354,7 +377,7 @@ function parseAt(state, blockState){
         }
 
         if(blockState.type === Types.plain){
-            if (!Match.plain_value(state.buffer.charCodeAt(state.index))) {
+            if (!Match.plain_value(state.chunk.charCodeAt(state.index))) {
                 let parsed = blockState.get_value();
                 if(parsed === "true") parsed = true;
                 else if(parsed === "false") parsed = false;
@@ -364,7 +387,7 @@ function parseAt(state, blockState){
 
                     blockState.valueTarget.push(parsed);
 
-                } else if(state.buffer.charCodeAt(state.index) === Chars["["]) {
+                } else if(state.chunk.charCodeAt(state.index) === Chars["["]) {
 
                     blockState.parsedValue = {name: parsed, values: []};
                     blockState.valueTarget = blockState.parsedValue.values;
@@ -384,7 +407,7 @@ function parseAt(state, blockState){
         }
 
 
-        const charCode = state.buffer.charCodeAt(state.index);
+        const charCode = state.chunk.charCodeAt(state.index);
 
 
         // Skip whitespace if possible.
@@ -430,7 +453,7 @@ function parseAt(state, blockState){
                     blockState.block.name = name;
 
                     if(charCode === Chars["("]){
-                        const nextChar = state.buffer.charCodeAt(state.index +1);
+                        const nextChar = state.chunk.charCodeAt(state.index +1);
 
                         if(nextChar === Chars[")"]){
                             blockState.type = Types.default;
@@ -630,8 +653,8 @@ function parseAt(state, blockState){
                     state.fastForwardTo(stringChar);
 
                     // Do not remove the if statement, it is a performance improvement
-                    if(state.buffer.charCodeAt(state.index) === Chars["\\"]){
-                        while(state.buffer.charCodeAt(state.index) === Chars["\\"] && state.index < state.buffer.length -1) {
+                    if(state.chunk.charCodeAt(state.index) === Chars["\\"]){
+                        while(state.chunk.charCodeAt(state.index) === Chars["\\"] && state.index < state.chunk.length -1) {
                             state.index++;
                             state.fastForwardTo(stringChar);
                         }
@@ -746,9 +769,9 @@ function stringify(parsed){
 function slice(code){
     const state = new ParserState({});
 
-    state.buffer = code;
+    state.chunk = code;
 
-    if(state.index >= state.buffer.length -1) return;
+    if(state.index >= state.chunk.length -1) return;
 
     const tokens = [];
     let token = { type: null, value: "" };
@@ -776,8 +799,8 @@ function slice(code){
 
     let stringChar = null, isComment = false, isValue = false, unbecomeValue = false;
 
-    while(++state.index < state.buffer.length){
-        const charCode = state.buffer.charCodeAt(state.index), char = state.buffer[state.index];
+    while(++state.index < state.chunk.length){
+        const charCode = state.chunk.charCodeAt(state.index), char = state.chunk[state.index];
         let type = null;
 
         if(isComment){
@@ -979,6 +1002,6 @@ function configTools(parsed){
 }
 
 
-let _exports = { parse, parserStream: ParserState, BlockState, Match, parseAt, stringify, slice, merge, configTools, version, v: parseInt(version[0]) };
+let _exports = { parse, parserStream: ParserState, BlockState, StringView, Match, parseAt, stringify, slice, merge, configTools, version, v: parseInt(version[0]) };
 
 if(!globalThis.window) module.exports = _exports; else window.AtriumParser = _exports;

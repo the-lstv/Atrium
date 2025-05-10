@@ -1,4 +1,4 @@
-const version = "1.2.2";
+const version = "1.2.3";
 
 const States = {
     blockSearch: -1,
@@ -142,13 +142,6 @@ class StringView {
         if (this.buffer instanceof Uint16Array) return this.cached = String.fromCharCode(...this.data());
         return this.cached = this.data().toString()
     }
-
-    get length(){
-        return this.end - this.start
-    }
-
-    static decoder = new TextDecoder()
-    static encoder = new TextEncoder()
 }
 
 
@@ -198,7 +191,6 @@ class ParserState {
         } else {
             this.offset = -1;
         }
-            
 
         this.index = this.offset
         this.blockState.parsingValueStart = this.index +1;
@@ -255,7 +247,7 @@ class BlockState {
                 properties: {}
             }
 
-            return block;
+            return Block.from(block);
 
         } else if(this.block) {
 
@@ -499,6 +491,10 @@ function parseAt(state, blockState){
                     continue
                 }
 
+                if(charCode === Chars[";"]){
+                    continue
+                }
+
                 if(!Match.keyword(charCode)) { blockState.close(true); continue };
 
                 blockState.parsing_state = States.keyword
@@ -573,9 +569,13 @@ function parseAt(state, blockState){
             case States.writeKeywordValue:
                 if(blockState.parsedValue !== null){
                     if(blockState.block.properties[blockState.last_key]) {
+                        if(!Array.isArray(blockState.block.properties[blockState.last_key])) {
+                            blockState.block.properties[blockState.last_key] = [blockState.block.properties[blockState.last_key]]
+                        }
+
                         blockState.block.properties[blockState.last_key].push(blockState.parsedValue)
                     } else {
-                        blockState.block.properties[blockState.last_key] = [blockState.parsedValue]
+                        blockState.block.properties[blockState.last_key] = blockState.parsedValue
                     }
 
                     blockState.parsedValue = null
@@ -676,6 +676,11 @@ function parseAt(state, blockState){
                     // Match plain values
                     blockState.value_start(1, 0, Types.plain)
 
+                } else if (charCode === Chars["}"]){
+
+                    blockState.parsing_state = blockState.next_parsing_state;
+                    state.index--;
+
                 } else blockState.close(true, "Unexpected character in arbitrary value " + String.fromCharCode(charCode))
                 break;
         }
@@ -715,6 +720,9 @@ function stringify(parsed){
         // Array
         if(Array.isArray(value)) return encodeArray(value);
 
+        // Block
+        if(value instanceof Block) return stringifyBlock(value);
+
         // Named array
         if(typeof value === "object") return `${value.name}${encodeArray(value.values)}`;
 
@@ -732,7 +740,7 @@ function stringify(parsed){
     function stringifyBlock(block){
         let result = `${block.name || ""}`;
 
-        if(block.attributes.length > 0) result += ` (${block.attributes.map(value => valueToString(value)).join(", ")})`;
+        if(block.attributes && block.attributes.length > 0) result += ` (${block.attributes.map(value => valueToString(value)).join(", ")})`;
 
         if(Object.keys(block.properties).length > 0) {
             result += " {\n";
@@ -741,8 +749,12 @@ function stringify(parsed){
                 result += `${key}${
                     Array.isArray(block.properties[key])?
                         ((block.properties[key].length === 1 && block.properties[key][0] === true)? "": `: ${block.properties[key].map(value => valueToString(value)).join(", ")}`) + ";":
-                        stringifyBlock(block.properties[key])
-                }`.split("\n").map(line => `    ${line}`).join("\n") + "\n"
+
+                (block.properties[key] instanceof Block)?
+                    stringifyBlock(block.properties[key]):
+
+                    ": " + valueToString(block.properties[key]) + ";"
+                }`.split("\n").map(line => `    ${line}`).join("\n") + "\n";
             }
 
             result += "}"
@@ -878,33 +890,60 @@ function merge(base, newConfig){
     return newConfig
 }
 
+class Block {
+    constructor(name, attributes, properties){
+        this.name = name || null;
+        this.isShadow = false;
+        this.attributes = attributes || [];
+        this.properties = properties || {};
+    }
+
+    static from(target){
+        if(typeof target === "object"){
+            Object.setPrototypeOf(target, Block.prototype);
+            return target;
+        }
+
+        return target
+    }
+
+    get(key, type = null, default_value = null) {
+        if(this.isShadow) return default_value;
+        if(!this.properties.hasOwnProperty(key)) return default_value;
+
+        let value = this.properties[key];
+        if(type === null || type === undefined) return value;
+
+        if(type === Array) return Array.isArray(value)? value: [value];
+        else if(Array.isArray(value)) value = value[0];
+
+        if(type === Boolean) return !!(value);
+        if(type === String) return value.toString? value.toString(): value;
+        if(typeof type === "function") return type(value);
+
+        return default_value
+    }
+
+    getBlock(name){
+        if(this.isShadow) return EMPTY_BLOCK;
+
+        if(!this.properties.hasOwnProperty(name)) return EMPTY_BLOCK;
+        if(this.properties[name] instanceof Block) return this.properties[name];
+        return EMPTY_BLOCK
+    }
+}
+
+
+const EMPTY_BLOCK = Object.freeze(Block.from({
+    name: null,
+    isShadow: true,
+    attributes: Object.freeze([]),
+    properties: Object.freeze({})
+}));
+
 
 function configTools(parsed){
     if(!(parsed instanceof Map)) throw new Error("You must provide a parsed config as a lookup table.");
-
-    function block_proxy(block){
-        if(block.__proxy) return block.__proxy;
-
-        return block.__proxy = new Proxy(block, {
-            get(target, prop) {
-                if (prop === "get") {
-                    return function (key, type, default_value = null){
-                        if(block.isShadow) return default_value;
-
-                        if(type === Array || type === null || type === undefined) return target.properties[key];
-                        if(type === Boolean) return !!(target.properties[key] && target.properties[key][0]);
- 
-                        if(!target.properties.hasOwnProperty(key)) return default_value;
-                        if(typeof type === "function") return type(target.properties[key] && target.properties[key][0]);
-
-                        return default_value
-                    }
-                }
-
-                return target[prop];
-            }
-        })
-    }
 
     let tools = {
         data: parsed,
@@ -913,29 +952,24 @@ function configTools(parsed){
             return parsed.has(name)
         },
 
-        block(name){
+        getBlock(name){
             let list = parsed.get(name);
 
             if(!list || list.length === 0){
-                return block_proxy({
-                    isShadow: true,
-                    name,
-                    attributes: [],
-                    properties: {}
-                })
+                return EMPTY_BLOCK
             }
 
-            return block_proxy(list[0])
+            return list[0]
         },
 
-        *blocks(name){
-            const blocks = parsed.get(name);
+        block(name){
+            console.warn("Deprecated: tools.block() is deprecated. Use tools.getBlock() instead.");
+            let block = tools.getBlock(name);
+            return block? block: EMPTY_BLOCK
+        },
 
-            if (blocks) {
-                for (const block of blocks) {
-                    yield block_proxy(block);
-                }
-            }
+        getBlocks(name){
+            return parsed.get(name) || [];
         },
 
         add(name, attributes, properties){
@@ -971,13 +1005,15 @@ function configTools(parsed){
                 if(_break) break;
                 if(!block || typeof block !== "object") continue;
 
-                if(block.name === name) callback(block_proxy(block), function(){
+                if(block.name === name) callback(block, function(){
                     delete list[i]
                 }, () => _break = true)
             }
         },
 
-        // Deprecated
+        /**
+         * @deprecated
+         */
         valueOf(name){
             let block = tools.block(name);
             return block? block.attributes[0].join("") : null
@@ -992,7 +1028,6 @@ function configTools(parsed){
         },
 
         merge(config){
-            return parsed
             parsed = merge(parsed, config)
             return parsed
         }
@@ -1002,6 +1037,6 @@ function configTools(parsed){
 }
 
 
-let _exports = { parse, parserStream: ParserState, BlockState, StringView, Match, parseAt, stringify, slice, merge, configTools, version, v: parseInt(version[0]) };
+let _exports = { parse, parserStream: ParserState, BlockState, Match, parseAt, stringify, slice, merge, configTools, version, v: parseInt(version[0]) };
 
 if(!globalThis.window) module.exports = _exports; else window.AtriumParser = _exports;

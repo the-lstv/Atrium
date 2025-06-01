@@ -909,6 +909,17 @@ class Block {
 
     get(key, type = null, default_value = null) {
         if(this.isShadow) return default_value;
+
+        if(Array.isArray(key)) {
+            // Alias-style access
+            // If any of the keys exist, return the first one found.
+
+            for(let k of key) {
+                if(this.properties.hasOwnProperty(k)) return this.get(k, type, default_value);
+            }
+            return default_value;
+        }
+
         if(!this.properties.hasOwnProperty(key)) return default_value;
 
         let value = this.properties[key];

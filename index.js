@@ -1,4 +1,4 @@
-const version = "1.2.2";
+const version = "1.2.3";
 
 const States = {
     blockSearch: -1,
@@ -46,6 +46,7 @@ const Match = {
             code === 58 || // :
             code === 60 || // <
             code === 62 || // >
+            code === 33 || // !
             code === 47    // /
         )
     },
@@ -91,8 +92,58 @@ const Chars = {
     ":": 58,
     ";": 59,
     "#": 35,
+    "[": 91,
+    "]": 93,
     "\\": 92
 }
+
+
+/**
+ * @description This is a currently unimplemented class.
+ */
+
+class StringView {
+    constructor(buffer, start = 0, end = buffer.length){
+        this.buffer = buffer;
+        this.start = start;
+        this.end = end;
+        this.cached = null
+    }
+
+    charCodeAt(index){
+        index += this.start
+        if (index < this.start || index >= this.end) return NaN
+        return this.buffer[index]
+    }
+
+    charAt(index){
+        const char = this.charCodeAt(index);
+        return isNaN(char)? "": String.fromCharCode(char)
+    }
+
+    slice(start, end){
+        start = Math.max(this.start + start, this.start)
+        end = Math.min(this.start + (end ?? this.end), this.end)
+        return new StringView(this.buffer, start, end)
+    }
+
+    substring(start, end){
+        return this.slice(start, end)
+    }
+
+    data(){
+        return (this.start === 0 && this.end === this.buffer.length)? this.buffer : this.buffer.subarray(this.start, this.end)
+    }
+
+    toString(){
+        if(this.cached) return this.cached;
+
+        if (this.buffer instanceof Uint8Array) return this.cached = StringView.decoder.decode(this.data());
+        if (this.buffer instanceof Uint16Array) return this.cached = String.fromCharCode(...this.data());
+        return this.cached = this.data().toString()
+    }
+}
+
 
 /**
  * @description This class holds the current position and state in the parsed buffer.
@@ -113,10 +164,10 @@ class ParserState {
     }
 
     fastForwardTo(char){
-        const index = this.buffer.indexOf(char, this.index +1)
+        const index = this.chunk.indexOf(char, this.index +1)
 
         if(index === -1) {
-            this.index = this.buffer.length;
+            this.index = this.chunk.length;
             return false
         }
 
@@ -125,8 +176,8 @@ class ParserState {
     }
 
     write(chunk){
-        if(this.buffer) throw ".write called more than once: Sorry, streaming is currently not supported. Please check for latest updates.";
-        this.buffer = chunk
+        if(this.chunk) throw ".write called more than once: Sorry, streaming is currently not supported. Please check for latest updates.";
+        this.chunk = chunk
 
         if(this.options.embedded){
 
@@ -140,7 +191,6 @@ class ParserState {
         } else {
             this.offset = -1;
         }
-            
 
         this.index = this.offset
         this.blockState.parsingValueStart = this.index +1;
@@ -151,8 +201,8 @@ class ParserState {
     }
 
     end(){
-        if(this.buffer) {
-            this.buffer = null
+        if(this.chunk) {
+            this.chunk = null
         }
 
         this.recursionLevels = null
@@ -178,6 +228,7 @@ class BlockState {
         this.parsing_state = embedded? States.blockName: States.blockSearch;
         this.next_parsing_state = 0;
         this.parsedValue = null;
+        this.valueTarget = null;
         this.type = embedded? 1: 0;
         this.parsingValueStart = this.parent.index;
         this.parsingValueLength = 0;
@@ -196,7 +247,7 @@ class BlockState {
                 properties: {}
             }
 
-            return block;
+            return Block.from(block);
 
         } else if(this.block) {
 
@@ -250,7 +301,7 @@ class BlockState {
 
             const error = new Error("[Parser Syntax Error] " + (message || "") + "\n  (at character " + this.parent.index + ")");
 
-            if(this.parent.options.strict) this.parent.index = this.parent.buffer.length; // Skip to the end of the file
+            if(this.parent.options.strict) this.parent.index = this.parent.chunk.length; // Skip to the end of the file
             if(typeof this.parent.options.onError === "function") this.parent.options.onError(error);
 
         }
@@ -264,7 +315,7 @@ class BlockState {
             const start = this.parent.index;
             const found = this.parent.fastForwardTo(Match.initiator)
             
-            if(this.parent.options.onText) this.parent.options.onText(this.parent.buffer.slice(start +1, this.parent.index +1));
+            if(this.parent.options.onText) this.parent.options.onText(this.parent.chunk.slice(start +1, this.parent.index +1));
 
             if(found){
                 this.parent.index++;
@@ -280,11 +331,11 @@ class BlockState {
         this.parsingValueStart = this.parent.index + positionOffset;
         this.parsingValueLength = length;
         this.parsingValueSequenceBroken = false;
-        this.parsedValue = null;
+        if(_type === Types.keyword) this.parsedValue = null;
     }
 
     get_value(){
-        return this.parent.buffer.slice(this.parsingValueStart, this.parsingValueStart + this.parsingValueLength)
+        return this.parent.chunk.slice(this.parsingValueStart, this.parsingValueStart + this.parsingValueLength)
     }
 
     begin_arbitrary_value(returnTo){
@@ -292,6 +343,7 @@ class BlockState {
         this.parsing_state = States.arbitraryValue
         this.type = Types.default
         this.next_parsing_state = returnTo
+        this.valueTarget = null;
     }
 }
 
@@ -303,9 +355,9 @@ class BlockState {
  */
 
 function parseAt(state, blockState){
-    if(state.index >= state.buffer.length -1) return;
+    if(state.index >= state.chunk.length -1) return;
 
-    while(++state.index < state.buffer.length){
+    while(++state.index < state.chunk.length){
 
         // Go up in the stack
         if(blockState.quit) {
@@ -317,15 +369,29 @@ function parseAt(state, blockState){
         }
 
         if(blockState.type === Types.plain){
-            if (!Match.plain_value(state.buffer.charCodeAt(state.index))) {
-                blockState.parsedValue = blockState.get_value()
+            if (!Match.plain_value(state.chunk.charCodeAt(state.index))) {
+                let parsed = blockState.get_value();
+                if(parsed === "true") parsed = true;
+                else if(parsed === "false") parsed = false;
+                else if(Match.digit(parsed)) parsed = parseInt(parsed);
 
-                if(blockState.parsedValue === "true") blockState.parsedValue = true;
-                else if(blockState.parsedValue === "false") blockState.parsedValue = false;
-                else if(Match.digit(blockState.parsedValue)) blockState.parsedValue = Number(blockState.parsedValue);
+                if(Array.isArray(blockState.valueTarget)) {
+
+                    blockState.valueTarget.push(parsed);
+
+                } else if(state.chunk.charCodeAt(state.index) === Chars["["]) {
+
+                    blockState.parsedValue = {name: parsed, values: []};
+                    blockState.valueTarget = blockState.parsedValue.values;
+                    
+                    state.index ++;
+
+                } else {
+                    blockState.parsedValue = parsed;
+                    blockState.parsing_state = blockState.next_parsing_state;
+                }
 
                 blockState.type = Types.default
-                blockState.parsing_state = blockState.next_parsing_state
             } else {
                 blockState.parsingValueLength++
                 continue
@@ -333,7 +399,7 @@ function parseAt(state, blockState){
         }
 
 
-        const charCode = state.buffer.charCodeAt(state.index);
+        const charCode = state.chunk.charCodeAt(state.index);
 
 
         // Skip whitespace if possible.
@@ -379,7 +445,7 @@ function parseAt(state, blockState){
                     blockState.block.name = name;
 
                     if(charCode === Chars["("]){
-                        const nextChar = state.buffer.charCodeAt(state.index +1);
+                        const nextChar = state.chunk.charCodeAt(state.index +1);
 
                         if(nextChar === Chars[")"]){
                             blockState.type = Types.default;
@@ -422,6 +488,10 @@ function parseAt(state, blockState){
             case States.keywordSearch:
                 if(charCode === Chars["}"]){
                     blockState.close()
+                    continue
+                }
+
+                if(charCode === Chars[";"]){
                     continue
                 }
 
@@ -499,9 +569,13 @@ function parseAt(state, blockState){
             case States.writeKeywordValue:
                 if(blockState.parsedValue !== null){
                     if(blockState.block.properties[blockState.last_key]) {
+                        if(!Array.isArray(blockState.block.properties[blockState.last_key])) {
+                            blockState.block.properties[blockState.last_key] = [blockState.block.properties[blockState.last_key]]
+                        }
+
                         blockState.block.properties[blockState.last_key].push(blockState.parsedValue)
                     } else {
-                        blockState.block.properties[blockState.last_key] = [blockState.parsedValue]
+                        blockState.block.properties[blockState.last_key] = blockState.parsedValue
                     }
 
                     blockState.parsedValue = null
@@ -511,7 +585,7 @@ function parseAt(state, blockState){
 
                     blockState.type = Types.default
                     blockState.parsing_state = States.arbitraryValue;
-                    
+
                 } else if(charCode === Chars[";"]){
 
                     blockState.type = Types.default
@@ -550,6 +624,23 @@ function parseAt(state, blockState){
             case States.arbitraryValue:
                 // TODO: Both attributes and values should be handled by the same state (all values)
 
+                if(Array.isArray(blockState.valueTarget)){
+                    if(charCode == Chars[","]) {
+                        break
+                    }
+
+                    if(charCode == Chars["]"]) {
+                        blockState.parsing_state = blockState.next_parsing_state;
+                        break
+                    }
+                } else {
+                    if(charCode == Chars["["]) {
+                        blockState.valueTarget = blockState.parsedValue = [];
+                        break
+                    }
+                }
+
+
                 if(Match.stringChar(charCode)){
 
                     // Match strings
@@ -562,22 +653,33 @@ function parseAt(state, blockState){
                     state.fastForwardTo(stringChar);
 
                     // Do not remove the if statement, it is a performance improvement
-                    if(state.buffer.charCodeAt(state.index) === Chars["\\"]){
-                        while(state.buffer.charCodeAt(state.index) === Chars["\\"] && state.index < state.buffer.length -1) {
+                    if(state.chunk.charCodeAt(state.index) === Chars["\\"]){
+                        while(state.chunk.charCodeAt(state.index) === Chars["\\"] && state.index < state.chunk.length -1) {
                             state.index++;
                             state.fastForwardTo(stringChar);
                         }
                     }
 
                     blockState.parsingValueLength = state.index - blockState.parsingValueStart +1;
-                    blockState.parsedValue = blockState.get_value();
-                    blockState.parsing_state = blockState.next_parsing_state;
+                    
+                    if(Array.isArray(blockState.valueTarget)) {
+                        blockState.valueTarget.push(blockState.get_value());
+                    } else {
+                        blockState.parsedValue = blockState.get_value();
+                        blockState.parsing_state = blockState.next_parsing_state;
+                    }
+
                     state.index++;
 
                 } else if (Match.plain_value(charCode)){
 
                     // Match plain values
                     blockState.value_start(1, 0, Types.plain)
+
+                } else if (charCode === Chars["}"]){
+
+                    blockState.parsing_state = blockState.next_parsing_state;
+                    state.index--;
 
                 } else blockState.close(true, "Unexpected character in arbitrary value " + String.fromCharCode(charCode))
                 break;
@@ -610,9 +712,27 @@ function stringify(parsed){
 
     let result = "";
 
+    function encodeArray(array){
+        return `[${array.map(value => valueToString(value)).join(", ")}]`
+    }
+
     function valueToString(value){
+        // Array
+        if(Array.isArray(value)) return encodeArray(value);
+
+        // Block
+        if(value instanceof Block) return stringifyBlock(value);
+
+        // Named array
+        if(typeof value === "object") return `${value.name}${encodeArray(value.values)}`;
+
+        // String
         if(typeof value === "string") {let quote = value.includes('"')? "'": '"'; return `${quote}${value}${quote}`};
+
+        // Number
         if(typeof value === "number") return value.toString();
+
+        // Boolean
         if(typeof value === "boolean") return value? "true": "false";
         return value
     }
@@ -620,7 +740,7 @@ function stringify(parsed){
     function stringifyBlock(block){
         let result = `${block.name || ""}`;
 
-        if(block.attributes.length > 0) result += ` (${block.attributes.map(value => valueToString(value)).join(", ")})`;
+        if(block.attributes && block.attributes.length > 0) result += ` (${block.attributes.map(value => valueToString(value)).join(", ")})`;
 
         if(Object.keys(block.properties).length > 0) {
             result += " {\n";
@@ -629,8 +749,12 @@ function stringify(parsed){
                 result += `${key}${
                     Array.isArray(block.properties[key])?
                         ((block.properties[key].length === 1 && block.properties[key][0] === true)? "": `: ${block.properties[key].map(value => valueToString(value)).join(", ")}`) + ";":
-                        stringifyBlock(block.properties[key])
-                }`.split("\n").map(line => `    ${line}`).join("\n") + "\n"
+
+                (block.properties[key] instanceof Block)?
+                    stringifyBlock(block.properties[key]):
+
+                    ": " + valueToString(block.properties[key]) + ";"
+                }`.split("\n").map(line => `    ${line}`).join("\n") + "\n";
             }
 
             result += "}"
@@ -657,9 +781,9 @@ function stringify(parsed){
 function slice(code){
     const state = new ParserState({});
 
-    state.buffer = code;
+    state.chunk = code;
 
-    if(state.index >= state.buffer.length -1) return;
+    if(state.index >= state.chunk.length -1) return;
 
     const tokens = [];
     let token = { type: null, value: "" };
@@ -687,8 +811,8 @@ function slice(code){
 
     let stringChar = null, isComment = false, isValue = false, unbecomeValue = false;
 
-    while(++state.index < state.buffer.length){
-        const charCode = state.buffer.charCodeAt(state.index), char = state.buffer[state.index];
+    while(++state.index < state.chunk.length){
+        const charCode = state.chunk.charCodeAt(state.index), char = state.chunk[state.index];
         let type = null;
 
         if(isComment){
@@ -764,33 +888,71 @@ function merge(base, newConfig){
     return newConfig
 }
 
+class Block {
+    constructor(name, attributes, properties){
+        this.name = name || null;
+        this.isShadow = false;
+        this.attributes = attributes || [];
+        this.properties = properties || {};
+    }
+
+    static from(target){
+        if(typeof target === "object"){
+            Object.setPrototypeOf(target, Block.prototype);
+            return target;
+        }
+
+        return target
+    }
+
+    get(key, type = null, default_value = null) {
+        if(this.isShadow) return default_value;
+
+        if(Array.isArray(key)) {
+            // Alias-style access
+            // If any of the keys exist, return the first one found.
+
+            for(let k of key) {
+                if(this.properties.hasOwnProperty(k)) return this.get(k, type, default_value);
+            }
+            return default_value;
+        }
+
+        if(!this.properties.hasOwnProperty(key)) return default_value;
+
+        let value = this.properties[key];
+        if(type === null || type === undefined) return value;
+
+        if(type === Array) return Array.isArray(value)? value: [value];
+        else if(Array.isArray(value)) value = value[0];
+
+        if(type === Boolean) return !!(value);
+        if(type === String) return value.toString? value.toString(): value;
+        if(typeof type === "function") return type(value);
+
+        return default_value
+    }
+
+    getBlock(name){
+        if(this.isShadow) return EMPTY_BLOCK;
+
+        if(!this.properties.hasOwnProperty(name)) return EMPTY_BLOCK;
+        if(this.properties[name] instanceof Block) return this.properties[name];
+        return EMPTY_BLOCK
+    }
+}
+
+
+const EMPTY_BLOCK = Object.freeze(Block.from({
+    name: null,
+    isShadow: true,
+    attributes: Object.freeze([]),
+    properties: Object.freeze({})
+}));
+
 
 function configTools(parsed){
     if(!(parsed instanceof Map)) throw new Error("You must provide a parsed config as a lookup table.");
-
-    function block_proxy(block){
-        if(block.__proxy) return block.__proxy;
-
-        return block.__proxy = new Proxy(block, {
-            get(target, prop) {
-                if (prop === "get") {
-                    return function (key, type, default_value = null){
-                        if(block.isShadow) return default_value;
-
-                        if(type === Array || type === null || type === undefined) return target.properties[key];
-                        if(type === Boolean) return !!(target.properties[key] && target.properties[key][0]);
- 
-                        if(!target.properties.hasOwnProperty(key)) return default_value;
-                        if(typeof type === "function") return type(target.properties[key] && target.properties[key][0]);
-
-                        return default_value
-                    }
-                }
-
-                return target[prop];
-            }
-        })
-    }
 
     let tools = {
         data: parsed,
@@ -799,29 +961,24 @@ function configTools(parsed){
             return parsed.has(name)
         },
 
-        block(name){
+        getBlock(name){
             let list = parsed.get(name);
 
             if(!list || list.length === 0){
-                return block_proxy({
-                    isShadow: true,
-                    name,
-                    attributes: [],
-                    properties: {}
-                })
+                return EMPTY_BLOCK
             }
 
-            return block_proxy(list[0])
+            return list[0]
         },
 
-        *blocks(name){
-            const blocks = parsed.get(name);
+        block(name){
+            console.warn("Deprecated: tools.block() is deprecated. Use tools.getBlock() instead.");
+            let block = tools.getBlock(name);
+            return block? block: EMPTY_BLOCK
+        },
 
-            if (blocks) {
-                for (const block of blocks) {
-                    yield block_proxy(block);
-                }
-            }
+        getBlocks(name){
+            return parsed.get(name) || [];
         },
 
         add(name, attributes, properties){
@@ -857,13 +1014,15 @@ function configTools(parsed){
                 if(_break) break;
                 if(!block || typeof block !== "object") continue;
 
-                if(block.name === name) callback(block_proxy(block), function(){
+                if(block.name === name) callback(block, function(){
                     delete list[i]
                 }, () => _break = true)
             }
         },
 
-        // Deprecated
+        /**
+         * @deprecated
+         */
         valueOf(name){
             let block = tools.block(name);
             return block? block.attributes[0].join("") : null
@@ -878,7 +1037,6 @@ function configTools(parsed){
         },
 
         merge(config){
-            return parsed
             parsed = merge(parsed, config)
             return parsed
         }

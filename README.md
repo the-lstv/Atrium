@@ -34,7 +34,7 @@ Options include:
 
 ### Streaming
 Streaming content is possible:
-Streaming allows for some extra performance and chunked parsing, for when you receive content in chunks, to avoid having to concat all chunks and parse them at once.
+Streaming allows for realtime or more efficient parsing, when you receive content in chunks, to avoid having to concat all chunks and parse them all at once.
 ```js
 const { parserStream } = require("./atrium")
 
@@ -67,9 +67,22 @@ parse("<div> @hello { world } </div>", {
   }
 })
 ```
+
 ### Performance
 Atrium is really highly optimized for both speed and memory efficiency (especially since recent releases).<br>
 This is so it can be used in places where latency and efficiency matter (like high-frequency webservers).<br>
 You can use this performance as an advantage for any usecase - from config files to realtime scripting.
+
+### Flexibility
+Atrium has an extremely flexible syntax, which allows you to use it for many different usecases.<br>
+All of the following are valid block definitions:
+```js
+block;
+block key;
+block();
+block() key;
+block() { key }
+block { key }
+```
 
 <img src="https://github.com/user-attachments/assets/e7c25ac9-4576-455b-94a9-093d7e53aae3">

@@ -241,6 +241,8 @@ class BlockState {
         this.parsingValueSequenceBroken = false;
         this.last_key = null;
 
+        this.blockShorthandSyntax = false;
+
         this.quit = false;
 
         if(returnBlock){
@@ -439,16 +441,15 @@ function parseAt(state, blockState){
             case States.blockName:
                 if(!Match.keyword(charCode)){
 
-                    if(Match.whitespace(charCode)) {
-                        blockState.parsingValueSequenceBroken = true
-                        break
-                    }
-
                     blockState.type = Types.default;
-                    
-                    const name = blockState.get_value();
 
+                    const name = blockState.get_value();
                     blockState.block.name = name;
+
+                    if(Match.whitespace(charCode)) {
+                        blockState.parsingValueSequenceBroken = true;
+                        break;
+                    }
 
                     if(charCode === Chars["("]){
                         const nextChar = state.chunk.charCodeAt(state.index +1);
@@ -459,30 +460,44 @@ function parseAt(state, blockState){
                             state.index ++;
                         } else blockState.begin_arbitrary_value(States.attribute);
 
-                    } else if (charCode === Chars["{"]) {
+                    }
+
+                    else if (charCode === Chars["{"]) {
                         blockState.parsing_state = States.keywordSearch;
                     }
 
                     else if (charCode === Chars[";"]) {
-                        blockState.close()
-                        continue
+                        blockState.close();
+                        break;
                     }
 
                     else blockState.close(true, "Unexpected character " + String.fromCharCode(charCode))
 
-                } else if (blockState.parsingValueSequenceBroken) {blockState.close(true, "Space in keyword names is not allowed"); continue} else blockState.parsingValueLength ++;
+                } else if(blockState.parsingValueSequenceBroken) {
+                    blockState.blockShorthandSyntax = true;
+                    blockState.parsing_state = States.keyword;
+                    blockState.value_start(1, 0, Types.keyword);
+                } else blockState.parsingValueLength ++;
                 break;
 
             // Before a block
             case States.beforeProperties:
-                if(charCode === Chars[";"]){
+                if(charCode === Chars[";"]) {
                     blockState.block.isCall = true;
                     blockState.close()
                     continue
                 }
 
-                if(charCode === Chars["{"]){
+                if(charCode === Chars["{"]) {
+                    blockState.blockShorthandSyntax = false;
                     blockState.parsing_state = States.keywordSearch
+                    continue
+                }
+
+                if(Match.keyword(charCode)) {
+                    blockState.blockShorthandSyntax = true;
+                    blockState.parsing_state = States.keyword;
+                    blockState.value_start(1, 0, Types.keyword);
                     continue
                 }
 
@@ -526,7 +541,7 @@ function parseAt(state, blockState){
                         blockState.block.properties[key] = [true]
                         blockState.parsing_state = States.keywordSearch
 
-                        if(charCode === Chars["}"]){
+                        if(charCode === Chars["}"] || blockState.blockShorthandSyntax) {
                             blockState.close()
                             continue
                         }
@@ -592,15 +607,15 @@ function parseAt(state, blockState){
                     blockState.type = Types.default
                     blockState.parsing_state = States.arbitraryValue;
 
+                } else if(charCode === Chars["}"] || (charCode === Chars[";"] && blockState.blockShorthandSyntax)){
+
+                    blockState.close()
+                    continue
+
                 } else if(charCode === Chars[";"]){
 
                     blockState.type = Types.default
                     blockState.parsing_state = States.keywordSearch;
-
-                } else if(charCode === Chars["}"]){
-
-                    blockState.close()
-                    continue
 
                 } else {
 

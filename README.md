@@ -83,5 +83,3 @@ block() key;
 block() { key }
 block { key }
 ```
-
-<img src="https://github.com/user-attachments/assets/e7c25ac9-4576-455b-94a9-093d7e53aae3">

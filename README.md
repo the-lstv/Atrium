@@ -32,13 +32,28 @@ Options include:
 ![Syntax](https://github.com/user-attachments/assets/29618798-503f-464b-8028-7d9619207594)
 
 
-### Streaming
-Streaming content is possible:
+### Embedded mode
+Atrium also works inside text, like HTML, using embedded mode.<br>
+Embedded mode requires all blocks to begin with "@".
+```js
+const { parse } = require("./atrium")
+
+parse("<div> @hello ("World"); </div>", {
+  embedded: true,
+  onBlock(block) {
+    console.log(block)
+  },
+  onText(text) {
+    console.log(text) // "<div> ", " </div>"
+  }
+})
+```
+
+### Streaming (Currently not fully implemented)
 Streaming allows for realtime or more efficient parsing, when you receive content in chunks, to avoid having to concat all chunks and parse them all at once.
 ```js
 const { parserStream } = require("./atrium")
 
-// NOTE: parserStream currently doesnt work with options like "asArray".
 const stream = new parserStream({
   onBlock(block) {
     console.log(block)
@@ -51,30 +66,14 @@ stream.write("} ") // At this point, onBlock would be called
 
 stream.end()
 ```
-### Embedded mode
-Atrium is designed to work among other formats, like HTML, using embedded mode.<br>
-Embedded mode requires all blocks to begin with "@".
-```js
-const { parse } = require("./atrium")
-
-parse("<div> @hello { world } </div>", {
-  embedded: true,
-  onBlock(block) {
-    console.log(block)
-  },
-  onText(text) {
-    console.log(text) // "<div> ", " </div>"
-  }
-})
-```
 
 ### Performance
-Atrium is really highly optimized for both speed and memory efficiency (especially since recent releases).<br>
-This is so it can be used in places where latency and efficiency matter (like high-frequency webservers).<br>
+Atrium is highly optimized for both speed and memory efficiency.<br>
+This is so it can be used in places where latency and efficiency matter (like webservers, dynamic scripting, etc.).<br>
 You can use this performance as an advantage for any usecase - from config files to realtime scripting.
 
 ### Flexibility
-Atrium has an extremely flexible syntax, which allows you to use it for many different usecases.<br>
+Atrium has an extremely flexible syntax, allowing you to use it in many ways.<br>
 All of the following are valid block definitions:
 ```js
 block;
@@ -84,5 +83,3 @@ block() key;
 block() { key }
 block { key }
 ```
-
-<img src="https://github.com/user-attachments/assets/e7c25ac9-4576-455b-94a9-093d7e53aae3">

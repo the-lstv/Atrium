@@ -113,7 +113,7 @@ class StringView {
         this.buffer = buffer;
         this.start = start;
         this.end = end;
-        this.cached = null
+        this.cached = null;
     }
 
     charCodeAt(index){
@@ -128,25 +128,25 @@ class StringView {
     }
 
     slice(start, end){
-        start = Math.max(this.start + start, this.start)
-        end = Math.min(this.start + (end ?? this.end), this.end)
-        return new StringView(this.buffer, start, end)
+        start = Math.max(this.start + start, this.start);
+        end = Math.min(this.start + (end ?? this.end), this.end);
+        return new StringView(this.buffer, start, end);
     }
 
     substring(start, end){
-        return this.slice(start, end)
+        return this.slice(start, end);
     }
 
     data(){
-        return (this.start === 0 && this.end === this.buffer.length)? this.buffer : this.buffer.subarray(this.start, this.end)
+        return (this.start === 0 && this.end === this.buffer.length)? this.buffer : this.buffer.subarray(this.start, this.end);
     }
 
-    toString(){
-        if(this.cached) return this.cached;
+    toString(cache = true){
+        if(cache && this.cached) return this.cached;
 
         if (this.buffer instanceof Uint8Array) return this.cached = StringView.decoder.decode(this.data());
         if (this.buffer instanceof Uint16Array) return this.cached = String.fromCharCode(...this.data());
-        return this.cached = this.data().toString()
+        return this.cached = this.data().toString();
     }
 }
 
@@ -170,7 +170,7 @@ class ParserState {
     }
 
     fastForwardTo(char){
-        const index = this.chunk.indexOf(char, this.index +1)
+        const index = this.chunk.indexOf(char, this.index +1);
 
         if(index === -1) {
             this.index = this.chunk.length;
@@ -191,7 +191,7 @@ class ParserState {
             
             // Nothing to do, so just skip parsing entirely and return everything as text
             if(this.offset === -1) return this.options.onText && this.options.onText(chunk);
-    
+
             if(this.options.onText) this.options.onText(chunk.substring(0, this.offset));
 
         } else {
@@ -305,7 +305,7 @@ class BlockState {
 
         } else {
 
-            this.clear()
+            this.clear();
 
             const error = new Error("[Parser Syntax Error] " + (message || "") + "\n  (at character " + this.parent.index + ")");
 
@@ -316,13 +316,13 @@ class BlockState {
 
         if(recursive) {
 
-            this.quit = true
+            this.quit = true;
 
         } else if(this.parent.options.embedded) {
 
             const start = this.parent.index;
-            const found = this.parent.fastForwardTo(Match.initiator)
-            
+            const found = this.parent.fastForwardTo(Match.initiator);
+
             if(this.parent.options.onText) this.parent.options.onText(this.parent.chunk.slice(start +1, this.parent.index +1));
 
             if(found){
@@ -343,7 +343,7 @@ class BlockState {
     }
 
     get_value(){
-        return this.parent.chunk.slice(this.parsingValueStart, this.parsingValueStart + this.parsingValueLength)
+        return this.parent.chunk.slice(this.parsingValueStart, this.parsingValueStart + this.parsingValueLength);
     }
 
     begin_arbitrary_value(returnTo){
@@ -381,7 +381,7 @@ function parseAt(state, blockState){
                 let parsed = blockState.get_value();
                 if(parsed === "true") parsed = true;
                 else if(parsed === "false") parsed = false;
-                else if(Match.digit(parsed)) parsed = parseInt(parsed);
+                else if(Match.digit(parsed)) parsed = parseFloat(parsed);
 
                 if(Array.isArray(blockState.valueTarget)) {
 
@@ -722,67 +722,66 @@ function parse(data, options = { asArray: true }){
 
     let collector = options.asArray? []: options.asLookupTable? new Map: null;
 
-    new ParserState(options, { collector }).write(data)
+    new ParserState(options, { collector }).write(data);
 
     return collector;
 }
 
+function encodeArray(array){
+    return `[${array.map(value => valueToString(value)).join(", ")}]`
+}
+
+function valueToString(value){
+    // Array
+    if(Array.isArray(value)) return encodeArray(value);
+
+    // Block
+    if(value instanceof Block) return stringifyBlock(value);
+
+    // Named array
+    if(typeof value === "object") return `${value.name}${encodeArray(value.values)}`;
+
+    // String
+    if(typeof value === "string") {let quote = value.includes('"')? "'": '"'; return `${quote}${value}${quote}`};
+
+    // Number
+    if(typeof value === "number") return value.toString();
+
+    // Boolean
+    if(typeof value === "boolean") return value? "true": "false";
+    return value
+}
+
+function stringifyBlock(block){
+    let result = `${block.name || ""}`;
+
+    if(block.attributes && block.attributes.length > 0) result += ` (${block.attributes.map(value => valueToString(value)).join(", ")})`;
+
+    if(Object.keys(block.properties).length > 0) {
+        result += " {\n";
+
+        for(let key in block.properties){
+            result += `${key}${
+                Array.isArray(block.properties[key])?
+                    ((block.properties[key].length === 1 && block.properties[key][0] === true)? "": `: ${block.properties[key].map(value => valueToString(value)).join(", ")}`) + ";":
+
+            (block.properties[key] instanceof Block)?
+                stringifyBlock(block.properties[key]):
+
+                ": " + valueToString(block.properties[key]) + ";"
+            }`.split("\n").map(line => `    ${line}`).join("\n") + "\n";
+        }
+
+        result += "}"
+    } else result += ";";
+
+    return result;
+}
 
 function stringify(parsed){
     if(!(parsed instanceof Map)) throw new Error("You must provide a parsed config as a lookup table.");
 
     let result = "";
-
-    function encodeArray(array){
-        return `[${array.map(value => valueToString(value)).join(", ")}]`
-    }
-
-    function valueToString(value){
-        // Array
-        if(Array.isArray(value)) return encodeArray(value);
-
-        // Block
-        if(value instanceof Block) return stringifyBlock(value);
-
-        // Named array
-        if(typeof value === "object") return `${value.name}${encodeArray(value.values)}`;
-
-        // String
-        if(typeof value === "string") {let quote = value.includes('"')? "'": '"'; return `${quote}${value}${quote}`};
-
-        // Number
-        if(typeof value === "number") return value.toString();
-
-        // Boolean
-        if(typeof value === "boolean") return value? "true": "false";
-        return value
-    }
-
-    function stringifyBlock(block){
-        let result = `${block.name || ""}`;
-
-        if(block.attributes && block.attributes.length > 0) result += ` (${block.attributes.map(value => valueToString(value)).join(", ")})`;
-
-        if(Object.keys(block.properties).length > 0) {
-            result += " {\n";
-
-            for(let key in block.properties){
-                result += `${key}${
-                    Array.isArray(block.properties[key])?
-                        ((block.properties[key].length === 1 && block.properties[key][0] === true)? "": `: ${block.properties[key].map(value => valueToString(value)).join(", ")}`) + ";":
-
-                (block.properties[key] instanceof Block)?
-                    stringifyBlock(block.properties[key]):
-
-                    ": " + valueToString(block.properties[key]) + ";"
-                }`.split("\n").map(line => `    ${line}`).join("\n") + "\n";
-            }
-
-            result += "}"
-        } else result += ";";
-
-        return result
-    }
 
     for(let name of parsed.keys()){
         for(let block of parsed.get(name)){
@@ -923,7 +922,23 @@ class Block {
             return target;
         }
 
-        return target
+        return target;
+    }
+
+    has(key){
+        if(this.isShadow) return false;
+
+        if(Array.isArray(key)) {
+            // Alias-style access
+            // If any of the keys exist, return true.
+
+            for(let k of key) {
+                if(this.properties.hasOwnProperty(k)) return true;
+            }
+            return false;
+        }
+
+        return this.properties.hasOwnProperty(key);
     }
 
     get(key, type = null, default_value = null) {
@@ -1011,7 +1026,7 @@ function configTools(parsed){
             }
 
             for(let key in properties) {
-                if(!Array.isArray(properties[key]) || typeof properties[key] !== "boolean") properties[key] = [properties[key]];
+                if(!Array.isArray(properties[key]) && typeof properties[key] !== "boolean") properties[key] = [properties[key]];
             }
 
             if(!parsed.has(name)) parsed.set(name, []);
@@ -1062,11 +1077,11 @@ function configTools(parsed){
             return parsed
         }
     }
-    
+
     return tools
 }
 
 
-let _exports = { parse, parserStream: ParserState, BlockState, Match, parseAt, stringify, slice, merge, configTools, version, v: parseInt(version[0]) };
+let _exports = { parse, parserStream: ParserState, BlockState, Match, parseAt, stringify, stringifyBlock, slice, merge, configTools, version, v: parseInt(version[0]) };
 
 if(!globalThis.window) module.exports = _exports; else window.AtriumParser = _exports;

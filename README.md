@@ -1,16 +1,35 @@
 ![Group 357](https://github.com/user-attachments/assets/f6377875-ba97-4a1b-80aa-2ce5ff0374ae)
 
 Atrium a versatile config file format used by [Akeno](https://github.com/the-lstv/Akeno) and other lstv.space projects.<br>
-This parser is extremely fast, zero-dependency, memory-efficient and highly configurable, written in JavaScript. To put speed into perspective: it rivals the native JSON.parse method (well, that is at least until the JS loop overhead catches up for large inputs), that is known for being very fast.<br><br>
+This parser is extremely fast, zero-dependency, memory-efficient and highly configurable, written in JavaScript. To put speed into perspective: it rivals the *native* JSON.parse method (well, at least until the JS loop overhead catches up with large inputs), that is known for being very fast.<br><br>
 
 You are free to use it to use for whatever kind of config you need!
 
 ---
 
 ### Syntax
-Atrium is designed to be human-readable.
+Atrium is designed to be human-readable and very general/flexible. Unlike JSON with strict syntax rules or yaml with a fixed structure, Atrium is closer to a tiny programming language (syntax-wise).
 
 ![Syntax](https://github.com/user-attachments/assets/29618798-503f-464b-8028-7d9619207594)
+
+There are additional shortcuts and features:
+```nginx
+# Single-property shorthand
+block single_property: 1;
+# Equivallent to block { single_property: 1 };
+
+# Attributes can have an array
+block(attributes[1, 2, 3]);
+
+# Nested shorthands
+if(condition) override { user name: "Joe" }
+# if (condition) { override { user { name: "Joe" } } }
+
+# Practical examples:
+include(lib:1.0.0[*], fs:1.0.0[read, write]);
+
+server port: 8080;
+```
 
 ### API Usage
 This is the most basic way to use the parser:

@@ -1,13 +1,18 @@
 ![Group 357](https://github.com/user-attachments/assets/f6377875-ba97-4a1b-80aa-2ce5ff0374ae)
 
-Atrium is the parser that powers [Akeno](https://github.com/the-lstv/Akeno).<br>
-It is extremely fast, zero-dependency, memory-efficient and highly configurable and versatile parser written in JavaScript.
+Atrium a versatile config file format used by [Akeno](https://github.com/the-lstv/Akeno) and other lstv.space projects.<br>
+This parser is extremely fast, zero-dependency, memory-efficient and highly configurable, written in JavaScript. To put speed into perspective: it rivals the native JSON.parse method (well, that is at least until the JS loop overhead catches up for large inputs), that is known for being very fast.<br><br>
 
-It efficiently manages block states and only clones objects when necesarry.
+You are free to use it to use for whatever kind of config you need!
 
 ---
 
-### Usage
+### Syntax
+Atrium is designed to be human-readable.
+
+![Syntax](https://github.com/user-attachments/assets/29618798-503f-464b-8028-7d9619207594)
+
+### API Usage
 This is the most basic way to use the parser:
 ```js
 const { parse } = require("./atrium")
@@ -27,9 +32,6 @@ Options include:
 - `onError`: called on syntax errors
 - `asArray`: if the parse function should return an array of blocks
 - `asLookupTable`: if the parse function should a lookup map for efficient data access
-
-### Syntax
-![Syntax](https://github.com/user-attachments/assets/29618798-503f-464b-8028-7d9619207594)
 
 
 ### Embedded mode

@@ -1,13 +1,37 @@
 ![Group 357](https://github.com/user-attachments/assets/f6377875-ba97-4a1b-80aa-2ce5ff0374ae)
 
-Atrium is the parser that powers [Akeno](https://github.com/the-lstv/Akeno).<br>
-It is extremely fast, zero-dependency, memory-efficient and highly configurable and versatile parser written in JavaScript.
+Atrium a versatile config file format used by [Akeno](https://github.com/the-lstv/Akeno) and other lstv.space projects.<br>
+This parser is extremely fast, zero-dependency, memory-efficient and highly configurable, written in JavaScript. To put speed into perspective: it rivals the *native* JSON.parse method (well, at least until the JS loop overhead catches up with large inputs), that is known for being very fast.<br><br>
 
-It efficiently manages block states and only clones objects when necesarry.
+You are free to use it to use for whatever kind of config you need!
 
 ---
 
-### Usage
+### Syntax
+Atrium is designed to be human-readable and very general/flexible. Unlike JSON with strict syntax rules or yaml with a fixed structure, Atrium is closer to a tiny programming language (syntax-wise).
+
+![Syntax](https://github.com/user-attachments/assets/29618798-503f-464b-8028-7d9619207594)
+
+There are additional shortcuts and features:
+```nginx
+# Single-property shorthand
+block single_property: 1;
+# Equivallent to block { single_property: 1 };
+
+# Attributes can have an array
+block(attributes[1, 2, 3]);
+
+# Nested shorthands
+if(condition) override { user name: "Joe" }
+# if (condition) { override { user { name: "Joe" } } }
+
+# Practical examples:
+include(lib:1.0.0[*], fs:1.0.0[read, write]);
+
+server port: 8080;
+```
+
+### API Usage
 This is the most basic way to use the parser:
 ```js
 const { parse } = require("./atrium")
@@ -27,9 +51,6 @@ Options include:
 - `onError`: called on syntax errors
 - `asArray`: if the parse function should return an array of blocks
 - `asLookupTable`: if the parse function should a lookup map for efficient data access
-
-### Syntax
-![Syntax](https://github.com/user-attachments/assets/29618798-503f-464b-8028-7d9619207594)
 
 
 ### Embedded mode
